@@ -29,6 +29,7 @@ import {
   Layers,
   CheckCircle2,
   XCircle,
+  X,
   Terminal,
   Zap,
   Info,
@@ -65,7 +66,7 @@ import {
   ArrowDown,
   BarChart3,
   PieChart,
-  Network
+  Network,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { GoogleGenAI, ThinkingLevel } from "@google/genai";
@@ -577,7 +578,7 @@ function App() {
   const [showFreeOnly, setShowFreeOnly] = useState(false);
   const [scanResults, setScanResults] = useState<any>(null);
   const [isScanning, setIsScanning] = useState(false);
-  const [activeTab, setActiveTab] = useState<'Tools' | 'Scan' | 'Workflows' | 'Intel' | 'Dorks' | 'Analyst' | 'Browser'>('Tools');
+  const [activeTab, setActiveTab] = useState<'Tools' | 'Scan' | 'Workflows' | 'Intel' | 'Dorks' | 'Analyst' | 'Browser' | 'TargetIntel'>('Tools');
   const [browserUrl, setBrowserUrl] = useState<string>('');
   const [browserHistory, setBrowserHistory] = useState<string[]>([]);
   const [browserForwardHistory, setBrowserForwardHistory] = useState<string[]>([]);
@@ -1400,6 +1401,7 @@ function App() {
   const [isHistoricalScan, setIsHistoricalScan] = useState(false);
   const [runningTools, setRunningTools] = useState<any[]>([]);
   const [showStatusWindow, setShowStatusWindow] = useState(false);
+  const [showIntelligenceWindow, setShowIntelligenceWindow] = useState(false);
   const [expandedToolId, setExpandedToolId] = useState<string | null>(null);
   const [showCommandPalette, setShowCommandPalette] = useState(false);
 
@@ -1432,24 +1434,300 @@ function App() {
     return id;
   };
 
-  const StatusWindow = () => {
-    const [, setTick] = useState(0);
-    useEffect(() => {
-      if (!showStatusWindow || runningTools.length === 0) return;
-      const interval = setInterval(() => {
-        setTick(t => t + 1);
-        // Randomly update progress for running tools to make it look "live"
-        setRunningTools(prev => prev.map(t => {
-          if (t.status === 'running' && t.progress < 90) {
-            return { ...t, progress: Math.min(95, t.progress + Math.random() * 5) };
-          }
-          return t;
-        }));
-      }, 1000);
-      return () => clearInterval(interval);
-    }, [showStatusWindow, runningTools.length]);
+  const exportLogsAsJSON = () => {
+    const data = JSON.stringify(runningTools, null, 2);
+    const blob = new Blob([data], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `osint_ops_log_${Date.now()}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
 
-    if (!showStatusWindow || runningTools.length === 0) return null;
+  const exportLogsAsText = () => {
+    let content = `[OSINT LIVE OPS LOG - ${new Date().toISOString()}]\n\n`;
+    runningTools.forEach(tool => {
+      content += `[${tool.name}] (${tool.status})\n`;
+      content += `Category: ${tool.category} | Type: ${tool.type}\n`;
+      content += `Start: ${new Date(tool.startTime).toLocaleTimeString()}\n`;
+      if (tool.results) content += `Results: ${tool.results}\n`;
+      content += `Logs:\n`;
+      tool.logs.forEach((log: string, i: number) => {
+        content += `  [${i}] ${log}\n`;
+      });
+      content += `\n-----------------------------------\n\n`;
+    });
+    const blob = new Blob([content], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `osint_ops_log_${Date.now()}.txt`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const IntelligenceWindow = () => {
+    if (!showIntelligenceWindow) return null;
+
+    return (
+      <motion.div
+        initial={{ opacity: 0, x: -20, scale: 0.95 }}
+        animate={{ opacity: 1, x: 0, scale: 1 }}
+        exit={{ opacity: 0, x: -20, scale: 0.95 }}
+        className="fixed top-24 left-6 bottom-24 w-[32rem] z-[100] font-mono"
+      >
+        <div className="bg-[#050505]/95 border border-white/10 shadow-[0_0_50px_rgba(0,0,0,0.5)] backdrop-blur-2xl rounded-lg overflow-hidden flex flex-col h-full">
+          {/* Header */}
+          <div className="flex items-center justify-between p-4 border-b border-white/5 bg-gradient-to-r from-neon-lime/10 to-transparent">
+            <div className="flex items-center gap-3">
+              <Shield size={18} className="text-neon-lime" />
+              <div>
+                <h3 className="text-[11px] font-black uppercase tracking-[0.3em] text-white leading-none">Intelligence Report</h3>
+                <p className="text-[9px] text-white/40 mt-1 uppercase tracking-wider">
+                  {scanResults ? `Target: ${scanResults.target} • ID: ${scanResults.timestamp.replace(/[^A-Z0-9]/g, '').slice(-8)}` : 'No Active Target'}
+                </p>
+              </div>
+            </div>
+            <button 
+              onClick={() => setShowIntelligenceWindow(false)}
+              className="text-white/20 hover:text-white transition-colors"
+            >
+              <XCircle size={16} />
+            </button>
+          </div>
+
+          {/* Content */}
+          <div className="flex-1 overflow-y-auto p-6 space-y-10 custom-scrollbar">
+            {!scanResults ? (
+              <div className="flex flex-col items-center justify-center py-24 text-center opacity-20">
+                <Shield size={48} className="mb-4" />
+                <p className="text-[10px] uppercase tracking-widest font-bold">No Intelligence Data</p>
+                <p className="text-[8px] mt-1">Initiate a scan to generate a target dossier</p>
+              </div>
+            ) : (
+              <>
+                {isScanning && (
+                  <div className="flex items-center gap-3 p-4 bg-neon-lime/5 border border-neon-lime/20 rounded-lg animate-pulse mb-6">
+                    <Activity size={16} className="text-neon-lime animate-spin" />
+                    <span className="text-[10px] font-mono text-neon-lime uppercase tracking-[0.3em]">
+                      {isDeepScan ? 'DEEP_INTELLIGENCE_EXTRACTION_IN_PROGRESS...' : 'SCAN_SEQUENCE_ACTIVE...'}
+                    </span>
+                  </div>
+                )}
+
+                {/* Risk Score */}
+                {targetRiskScore && (
+                  <div className="grid grid-cols-1 gap-6">
+                    <div className="bg-black/40 border-2 border-neon-magenta p-6 flex flex-col items-center justify-center text-center">
+                      <span className="text-[10px] font-mono text-neon-magenta uppercase tracking-widest mb-2">VULNERABILITY_SCORE</span>
+                      <div className="text-6xl font-graffiti text-neon-magenta mb-2">{targetRiskScore.score}</div>
+                      <div className={`text-xs font-mono uppercase tracking-[0.3em] px-3 py-1 border ${
+                        targetRiskScore.level === 'Critical' ? 'bg-neon-magenta text-black border-neon-magenta' :
+                        targetRiskScore.level === 'High' ? 'text-neon-magenta border-neon-magenta' :
+                        targetRiskScore.level === 'Medium' ? 'text-neon-yellow border-neon-yellow' :
+                        'text-neon-lime border-neon-lime'
+                      }`}>
+                        {targetRiskScore.level}_RISK
+                      </div>
+                    </div>
+                    <div className="bg-black/40 border-2 border-white/10 p-6">
+                      <span className="text-[10px] font-mono text-white/40 uppercase tracking-widest mb-4 block">CRITICAL_RISK_FACTORS</span>
+                      <div className="space-y-4">
+                        {targetRiskScore.factors.map((factor, i) => (
+                          <div key={i} className="flex items-start gap-4">
+                            <div className="p-1 bg-neon-magenta/20 border border-neon-magenta/40 mt-1">
+                              <AlertTriangle size={12} className="text-neon-magenta" />
+                            </div>
+                            <p className="text-xs font-mono text-white/80 leading-relaxed uppercase">{factor}</p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* AI Dossier */}
+                {targetDossier && (
+                  <div className="bg-neon-cyan/5 border-2 border-neon-cyan/30 p-6 relative overflow-hidden group rounded">
+                    <div className="flex items-center gap-3 mb-6 border-b border-neon-cyan/20 pb-4">
+                      <Brain className="text-neon-cyan" size={20} />
+                      <h3 className="text-xl font-graffiti text-neon-cyan tracking-widest uppercase">AI_TARGET_DOSSIER</h3>
+                    </div>
+                    <div className="prose prose-invert prose-sm max-w-none font-mono text-white/90 leading-relaxed dossier-content">
+                      <Markdown>{targetDossier}</Markdown>
+                    </div>
+                    <div className="mt-6 pt-4 border-t border-neon-cyan/20 flex justify-between items-center">
+                      <p className="text-[8px] font-mono text-neon-cyan/50 uppercase tracking-[0.3em]">AI_GENERATED // CONFIDENTIAL</p>
+                      <button 
+                        onClick={() => {
+                          const blob = new Blob([targetDossier], { type: 'text/markdown' });
+                          const url = URL.createObjectURL(blob);
+                          const a = document.createElement('a');
+                          a.href = url;
+                          a.download = `DOSSIER_${searchQuery.replace(/[^a-z0-9]/gi, '_').toUpperCase()}.md`;
+                          a.click();
+                        }}
+                        className="text-[9px] font-mono text-neon-cyan hover:underline uppercase tracking-widest"
+                      >
+                        DOWNLOAD_MD
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Social Footprint */}
+                {scanResults.social && Array.isArray(scanResults.social) && (
+                  <div className="space-y-8">
+                    <div className="flex items-center gap-3 border-b border-white/10 pb-2">
+                      <User size={16} className="text-neon-lime" />
+                      <h4 className="text-xs font-mono uppercase tracking-widest text-white">Social_Footprint</h4>
+                    </div>
+                    <div className="space-y-8">
+                      {['Social', 'Chat', 'Gaming', 'Dating', 'NSFW', 'Professional', 'Creative', 'Tech', 'Other'].map(category => {
+                        const categorySites = scanResults.social.filter((s: any) => s.category === category);
+                        if (categorySites.length === 0) return null;
+                        
+                        const foundCount = categorySites.filter((s: any) => (s.status === 'Found' || s.status === 'Possible but Deleted') && !falsePositives.has(s.name)).length;
+                        
+                        return (
+                          <div key={category} className="space-y-3">
+                            <div className="flex items-center justify-between">
+                              <h5 className="text-[9px] font-mono uppercase text-neon-cyan flex items-center gap-2">
+                                <span className="w-1.5 h-1.5 bg-neon-cyan rounded-full animate-pulse" />
+                                {category}_SECTOR
+                              </h5>
+                              <span className="text-[8px] font-mono opacity-50">
+                                {foundCount} / {categorySites.length} IDENTIFIED
+                              </span>
+                            </div>
+                            
+                            <div className="grid grid-cols-1 gap-2">
+                              {foundCount === 0 ? (
+                                <div className="py-4 border border-dashed border-white/10 rounded flex flex-col items-center justify-center bg-black/20">
+                                  <span className="text-[8px] font-mono text-white/20 uppercase tracking-widest">No_Active_Profiles</span>
+                                </div>
+                              ) : categorySites.map((site: any) => {
+                                const isFalsePositive = falsePositives.has(site.name);
+                                if ((site.status === 'Found' || site.status === 'Possible but Deleted') && !isFalsePositive) {
+                                  const isPossible = site.status === 'Possible but Deleted';
+                                  return (
+                                    <div 
+                                      key={site.name}
+                                      className={`p-2 border flex items-center justify-between transition-all ${isPossible ? 'border-neon-magenta/30 bg-neon-magenta/5' : 'border-neon-lime/30 bg-neon-lime/5'}`}
+                                    >
+                                      <div className="flex items-center gap-2">
+                                        {site.avatar && (
+                                          <img 
+                                            src={site.avatar} 
+                                            alt={site.name} 
+                                            className="w-4 h-4 rounded-full border border-white/20"
+                                            referrerPolicy="no-referrer"
+                                          />
+                                        )}
+                                        <span className="text-[9px] uppercase tracking-widest truncate max-w-[120px]">{site.name}</span>
+                                      </div>
+                                      <div className="flex items-center gap-2">
+                                        <span className={`text-[8px] font-bold ${isPossible ? 'text-neon-magenta' : 'text-neon-lime'}`}>
+                                          {isPossible ? 'POSSIBLE' : 'FOUND'}
+                                        </span>
+                                        <button 
+                                          onClick={() => handleToolSearch(site.name, site.url)}
+                                          className="p-1 hover:bg-white/10 rounded transition-colors"
+                                        >
+                                          <ExternalLink size={10} className="text-white/40" />
+                                        </button>
+                                      </div>
+                                    </div>
+                                  );
+                                }
+                                return null;
+                              })}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {/* Breach Intelligence */}
+                <div className="space-y-4">
+                  <div className="flex items-center gap-3 border-b border-white/10 pb-2">
+                    <Zap size={16} className="text-neon-magenta" />
+                    <h4 className="text-xs font-mono uppercase tracking-widest text-white">Breach_Intelligence</h4>
+                  </div>
+                  <div className="grid grid-cols-1 gap-3">
+                    <div className="p-3 bg-red-500/5 border border-red-500/20 rounded">
+                      <h5 className="text-[9px] text-red-400 font-bold mb-1 uppercase">Potential_Leaks</h5>
+                      <button 
+                        onClick={() => handleBreachQuery('HIBP', `https://haveibeenpwned.com/account/${scanResults.target}`)}
+                        className="w-full py-1 bg-red-500/20 text-red-400 text-[8px] border border-red-500/30 hover:bg-red-500/40 transition-all uppercase tracking-widest"
+                      >
+                        RUN_HIBP_QUERY
+                      </button>
+                    </div>
+                    <div className="p-3 bg-neon-cyan/5 border border-neon-cyan/20 rounded">
+                      <h5 className="text-[9px] text-neon-cyan font-bold mb-1 uppercase">Identity_Verification</h5>
+                      <button 
+                        onClick={() => handleBreachQuery('IntelX', `https://intelx.io/?s=${scanResults.target}`)}
+                        className="w-full py-1 bg-neon-cyan/20 text-neon-cyan text-[8px] border border-neon-cyan/30 hover:bg-neon-cyan/40 transition-all uppercase tracking-widest"
+                      >
+                        QUERY_INTELX_DB
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                {/* WHOIS */}
+                {scanResults.whois && !scanResults.whois.error && (
+                  <div className="space-y-4">
+                    <div className="flex items-center gap-3 border-b border-white/10 pb-2">
+                      <Globe size={16} className="text-neon-cyan" />
+                      <h4 className="text-xs font-mono uppercase tracking-widest text-white">Whois_Data</h4>
+                    </div>
+                    <div className="grid grid-cols-1 gap-2 bg-white/5 p-4 border border-white/10 rounded">
+                      {Object.entries(scanResults.whois).map(([key, val]: [string, any]) => (
+                        val && typeof val === 'string' && (
+                          <div key={key} className="flex justify-between items-center gap-4 text-[9px] font-mono">
+                            <span className="opacity-40 uppercase">{key}</span>
+                            <span className="text-neon-cyan truncate max-w-[200px]">{val}</span>
+                          </div>
+                        )
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+
+          {/* Footer */}
+          <div className="p-4 border-t border-white/5 bg-black/50 grid grid-cols-2 gap-3">
+            <button 
+              onClick={exportCurrentScanResults}
+              disabled={!scanResults}
+              className="flex items-center justify-center gap-2 py-2 bg-neon-lime/10 border border-neon-lime/30 rounded text-[9px] text-neon-lime uppercase font-bold tracking-widest hover:bg-neon-lime hover:text-black transition-all disabled:opacity-20 disabled:cursor-not-allowed"
+            >
+              <Download size={12} />
+              Export_JSON
+            </button>
+            <button 
+              onClick={downloadScanLog}
+              disabled={!scanResults}
+              className="flex items-center justify-center gap-2 py-2 bg-white/5 border border-white/10 rounded text-[9px] text-white/60 uppercase font-bold tracking-widest hover:bg-white/10 hover:text-white transition-all disabled:opacity-20 disabled:cursor-not-allowed"
+            >
+              <Download size={12} />
+              Raw_Log
+            </button>
+          </div>
+        </div>
+      </motion.div>
+    );
+  };
+
+  const StatusWindow = () => {
+    if (!showStatusWindow) return null;
 
     const activeCount = runningTools.filter(t => t.status === 'running').length;
     const completedCount = runningTools.filter(t => t.status === 'completed').length;
@@ -1460,16 +1738,16 @@ function App() {
         initial={{ opacity: 0, y: 20, scale: 0.95 }}
         animate={{ opacity: 1, y: 0, scale: 1 }}
         exit={{ opacity: 0, y: 20, scale: 0.95 }}
-        className="fixed bottom-6 right-6 w-96 z-[100] font-mono"
+        className="fixed bottom-24 right-6 w-96 z-[100] font-mono"
       >
-        <div className="bg-[#050505]/95 border border-white/10 shadow-[0_0_50px_rgba(0,0,0,0.5)] backdrop-blur-2xl rounded-lg overflow-hidden flex flex-col max-h-[600px]">
+        <div className="bg-[#050505]/95 border border-white/10 shadow-[0_0_50px_rgba(0,0,0,0.5)] backdrop-blur-2xl rounded-lg overflow-hidden flex flex-col max-h-[80vh]">
           {/* Header */}
           <div className="flex items-center justify-between p-4 border-b border-white/5 bg-gradient-to-r from-neon-cyan/10 to-transparent">
             <div className="flex items-center gap-3">
               <div className="relative">
                 <Activity size={18} className="text-neon-cyan" />
                 {activeCount > 0 && (
-                  <span className="absolute -top-1 -right-1 w-2 h-2 bg-neon-cyan rounded-full animate-ping" />
+                  <span className="absolute -top-1 -right-1 w-2 h-2 bg-neon-cyan rounded-full" />
                 )}
               </div>
               <div>
@@ -1483,9 +1761,10 @@ function App() {
               <button 
                 onClick={() => setRunningTools([])}
                 className="group flex items-center gap-2 px-2 py-1 rounded border border-white/5 hover:border-neon-magenta/50 transition-all"
+                title="Clear all logs"
               >
                 <Trash2 size={10} className="text-white/40 group-hover:text-neon-magenta" />
-                <span className="text-[8px] text-white/40 group-hover:text-neon-magenta uppercase font-bold">Wipe_Logs</span>
+                <span className="text-[8px] text-white/40 group-hover:text-neon-magenta uppercase font-bold">Wipe</span>
               </button>
               <button 
                 onClick={() => setShowStatusWindow(false)}
@@ -1499,147 +1778,177 @@ function App() {
           {/* Global Progress */}
           {activeCount > 0 && (
             <div className="h-0.5 w-full bg-white/5 overflow-hidden">
-              <motion.div 
-                className="h-full bg-neon-cyan shadow-[0_0_10px_#00f3ff]"
-                animate={{ 
-                  x: ['-100%', '100%'],
-                }}
-                transition={{ 
-                  duration: 2, 
-                  repeat: Infinity, 
-                  ease: "linear" 
-                }}
-              />
+              <div className="h-full bg-neon-cyan shadow-[0_0_10px_#00f3ff]" style={{ width: '100%', animation: 'none' }} />
             </div>
           )}
           
           {/* Tool List */}
           <div className="flex-1 overflow-y-auto p-4 space-y-3 custom-scrollbar">
-            <AnimatePresence mode="popLayout">
-              {runningTools.map((tool) => (
-                <motion.div 
-                  key={tool.id}
-                  layout
-                  initial={{ opacity: 0, x: -20 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  exit={{ opacity: 0, scale: 0.9 }}
-                  className={`group relative rounded-md border transition-all duration-300 ${
-                    expandedToolId === tool.id 
-                      ? 'bg-white/5 border-white/20' 
-                      : 'bg-white/[0.02] border-white/5 hover:border-white/10'
-                  }`}
-                >
-                  <div 
-                    className="p-3 cursor-pointer"
-                    onClick={() => setExpandedToolId(expandedToolId === tool.id ? null : tool.id)}
+            {runningTools.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-12 text-center opacity-20">
+                <Activity size={32} className="mb-4" />
+                <p className="text-[10px] uppercase tracking-widest font-bold">No active processes</p>
+                <p className="text-[8px] mt-1">Start a scan to monitor live operations</p>
+              </div>
+            ) : (
+              <AnimatePresence mode="popLayout" initial={false}>
+                {runningTools.map((tool) => (
+                  <motion.div 
+                    key={tool.id}
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, scale: 0.95 }}
+                    className={`group relative rounded-md border transition-all duration-200 ${
+                      expandedToolId === tool.id 
+                        ? 'bg-white/5 border-white/20' 
+                        : 'bg-white/[0.02] border-white/5 hover:border-white/10'
+                    }`}
                   >
-                    <div className="flex items-center justify-between mb-2">
-                      <div className="flex items-center gap-2">
-                        <span className={`w-1.5 h-1.5 rounded-full ${
-                          tool.status === 'completed' ? 'bg-neon-lime shadow-[0_0_5px_#39ff14]' : 
-                          tool.status === 'failed' ? 'bg-red-500 shadow-[0_0_5px_#ef4444]' : 
-                          'bg-neon-cyan animate-pulse shadow-[0_0_5px_#00f3ff]'
-                        }`} />
-                        <span className="text-[10px] text-white/90 font-bold uppercase tracking-widest">{tool.name}</span>
+                    <div 
+                      className="p-3 cursor-pointer"
+                      onClick={() => setExpandedToolId(expandedToolId === tool.id ? null : tool.id)}
+                    >
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="flex items-center gap-2">
+                          <span className={`w-1.5 h-1.5 rounded-full ${
+                            tool.status === 'completed' ? 'bg-neon-lime shadow-[0_0_5px_#39ff14]' : 
+                            tool.status === 'failed' ? 'bg-red-500 shadow-[0_0_5px_#ef4444]' : 
+                            'bg-neon-cyan shadow-[0_0_5px_#00f3ff]'
+                          }`} />
+                          <span className="text-[10px] text-white/90 font-bold uppercase tracking-widest">{tool.name}</span>
+                        </div>
+                        <div className="flex items-center gap-3">
+                          <span className="text-[9px] text-white/30 font-mono">
+                            {Math.floor((Date.now() - tool.startTime) / 1000)}s
+                          </span>
+                          <ChevronDown 
+                            size={12} 
+                            className={`text-white/20 transition-transform duration-300 ${expandedToolId === tool.id ? 'rotate-180' : ''}`} 
+                          />
+                        </div>
                       </div>
-                      <div className="flex items-center gap-3">
-                        <span className="text-[9px] text-white/30 font-mono">
-                          {Math.floor((Date.now() - tool.startTime) / 1000)}s
-                        </span>
-                        <ChevronDown 
-                          size={12} 
-                          className={`text-white/20 transition-transform duration-300 ${expandedToolId === tool.id ? 'rotate-180' : ''}`} 
+
+                      {/* Mini Progress Bar */}
+                      <div className="h-1 w-full bg-white/5 rounded-full overflow-hidden">
+                        <motion.div 
+                          className={`h-full transition-all duration-500 ${
+                            tool.status === 'completed' ? 'bg-neon-lime' : 
+                            tool.status === 'failed' ? 'bg-red-500' : 
+                            'bg-neon-cyan'
+                          }`}
+                          initial={{ width: 0 }}
+                          animate={{ width: `${tool.status === 'completed' ? 100 : tool.status === 'failed' ? 100 : Math.max(10, tool.progress)}%` }}
                         />
                       </div>
+
+                      {/* Status Text */}
+                      <div className="flex items-center justify-between mt-2">
+                        <span className="text-[8px] text-white/40 uppercase tracking-tighter">
+                          {tool.category} • {tool.type}
+                        </span>
+                        <span className={`text-[8px] font-black uppercase ${
+                          tool.status === 'completed' ? 'text-neon-lime' : 
+                          tool.status === 'failed' ? 'text-red-500' : 
+                          'text-neon-cyan'
+                        }`}>
+                          {tool.status === 'running' ? `Processing_${Math.floor(tool.progress)}%` : tool.status}
+                        </span>
+                      </div>
                     </div>
 
-                    {/* Mini Progress Bar */}
-                    <div className="h-1 w-full bg-white/5 rounded-full overflow-hidden">
-                      <motion.div 
-                        className={`h-full transition-all duration-500 ${
-                          tool.status === 'completed' ? 'bg-neon-lime' : 
-                          tool.status === 'failed' ? 'bg-red-500' : 
-                          'bg-neon-cyan'
-                        }`}
-                        style={{ width: `${tool.status === 'completed' ? 100 : tool.progress}%` }}
-                      />
-                    </div>
+                    {/* Expanded Details */}
+                    <AnimatePresence>
+                      {expandedToolId === tool.id && (
+                        <motion.div
+                          initial={{ height: 0, opacity: 0 }}
+                          animate={{ height: 'auto', opacity: 1 }}
+                          exit={{ height: 0, opacity: 0 }}
+                          className="overflow-hidden border-t border-white/5 bg-black/40"
+                        >
+                          <div className="p-3 space-y-3 max-h-64 overflow-y-auto custom-scrollbar">
+                            {/* Logs */}
+                            <div className="space-y-1">
+                              <p className="text-[8px] text-white/20 uppercase font-bold tracking-widest mb-2">Execution_Logs</p>
+                              {tool.logs?.map((log: string, i: number) => (
+                                <div key={i} className="flex gap-2 text-[9px] font-mono">
+                                  <span className="text-white/10">[{i}]</span>
+                                  <span className="text-white/60">{log}</span>
+                                </div>
+                              ))}
+                              {tool.status === 'running' && (
+                                <div className="flex gap-2 text-[9px] font-mono animate-pulse">
+                                  <span className="text-white/10">[*]</span>
+                                  <span className="text-neon-cyan">Awaiting server response...</span>
+                                </div>
+                              )}
+                            </div>
 
-                    {/* Status Text */}
-                    <div className="flex items-center justify-between mt-2">
-                      <span className="text-[8px] text-white/40 uppercase tracking-tighter">
-                        {tool.category} • {tool.type}
-                      </span>
-                      <span className={`text-[8px] font-black uppercase ${
-                        tool.status === 'completed' ? 'text-neon-lime' : 
-                        tool.status === 'failed' ? 'text-red-500' : 
-                        'text-neon-cyan'
-                      }`}>
-                        {tool.status === 'running' ? `Processing_${Math.floor(tool.progress)}%` : tool.status}
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* Expanded Details */}
-                  <AnimatePresence>
-                    {expandedToolId === tool.id && (
-                      <motion.div
-                        initial={{ height: 0, opacity: 0 }}
-                        animate={{ height: 'auto', opacity: 1 }}
-                        exit={{ height: 0, opacity: 0 }}
-                        className="overflow-hidden border-t border-white/5 bg-black/40"
-                      >
-                        <div className="p-3 space-y-3">
-                          {/* Logs */}
-                          <div className="space-y-1">
-                            <p className="text-[8px] text-white/20 uppercase font-bold tracking-widest mb-2">Execution_Logs</p>
-                            {tool.logs?.map((log: string, i: number) => (
-                              <div key={i} className="flex gap-2 text-[9px] font-mono">
-                                <span className="text-white/10">[{i}]</span>
-                                <span className="text-white/60">{log}</span>
+                            {/* Site-by-site results for social scans */}
+                            {tool.siteResults && tool.siteResults.length > 0 && (
+                              <div className="mt-4 pt-4 border-t border-white/5 space-y-1">
+                                <p className="text-[8px] text-neon-cyan uppercase font-bold tracking-widest mb-2">Site_By_Site_Analysis</p>
+                                <div className="grid grid-cols-1 gap-1">
+                                  {tool.siteResults.map((site: any, i: number) => (
+                                    <div key={i} className="flex items-center justify-between gap-2 py-1 border-b border-white/[0.02] text-[8px] font-mono">
+                                      <span className="text-white/40 truncate">{site.name}</span>
+                                      <span className={`shrink-0 font-bold ${
+                                        site.status === 'Found' ? 'text-neon-lime' : 
+                                        site.status === 'Possible but Deleted' ? 'text-neon-magenta' : 
+                                        'text-white/10'
+                                      }`}>
+                                        {site.status === 'Found' ? 'HIT' : site.status === 'Possible but Deleted' ? 'POSSIBLE' : 'MISS'}
+                                      </span>
+                                    </div>
+                                  ))}
+                                </div>
                               </div>
-                            ))}
-                            {tool.status === 'running' && (
-                              <div className="flex gap-2 text-[9px] font-mono animate-pulse">
-                                <span className="text-white/10">[*]</span>
-                                <span className="text-neon-cyan">Awaiting server response...</span>
+                            )}
+
+                            {/* Results Preview */}
+                            {tool.results && (
+                              <div className="p-2 bg-white/[0.03] rounded border border-white/5">
+                                <p className="text-[8px] text-white/20 uppercase font-bold tracking-widest mb-1">Result_Summary</p>
+                                <p className="text-[10px] text-neon-lime font-mono leading-relaxed">{tool.results}</p>
                               </div>
                             )}
                           </div>
-
-                          {/* Results Preview */}
-                          {tool.results && (
-                            <div className="p-2 bg-white/[0.03] rounded border border-white/5">
-                              <p className="text-[8px] text-white/20 uppercase font-bold tracking-widest mb-1">Result_Summary</p>
-                              <p className="text-[10px] text-neon-lime font-mono leading-relaxed">{tool.results}</p>
-                            </div>
-                          )}
-
-                          {/* Actions */}
-                          <div className="flex gap-2">
-                            <button className="flex-1 py-1.5 bg-white/5 hover:bg-white/10 rounded text-[8px] text-white/60 uppercase font-bold transition-all">
-                              View_Full_Data
-                            </button>
-                            <button className="flex-1 py-1.5 bg-white/5 hover:bg-white/10 rounded text-[8px] text-white/60 uppercase font-bold transition-all">
-                              Export_JSON
-                            </button>
-                          </div>
-                        </div>
-                      </motion.div>
-                    )}
-                  </AnimatePresence>
-                </motion.div>
-              ))}
-            </AnimatePresence>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                  </motion.div>
+                ))}
+              </AnimatePresence>
+            )}
           </div>
 
           {/* Footer */}
-          <div className="p-3 border-t border-white/5 bg-black/50 flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <div className="w-1 h-1 bg-neon-lime rounded-full animate-pulse" />
-              <span className="text-[8px] text-white/30 uppercase tracking-widest">System_Online</span>
+          <div className="p-3 border-t border-white/5 bg-black/50 flex flex-col gap-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className="w-1 h-1 bg-neon-lime rounded-full animate-pulse" />
+                <span className="text-[8px] text-white/30 uppercase tracking-widest">System_Online</span>
+              </div>
+              <span className="text-[8px] text-white/20 font-mono">v2.4.0-STABLE</span>
             </div>
-            <span className="text-[8px] text-white/20 font-mono">v2.4.0-STABLE</span>
+            
+            <div className="grid grid-cols-2 gap-2">
+              <button 
+                onClick={exportLogsAsJSON}
+                disabled={runningTools.length === 0}
+                className="flex items-center justify-center gap-2 py-2 bg-white/5 border border-white/10 rounded text-[8px] text-white/60 uppercase font-bold tracking-widest hover:bg-white/10 hover:text-white transition-all disabled:opacity-30 disabled:cursor-not-allowed"
+              >
+                <Download size={10} />
+                Export_JSON
+              </button>
+              <button 
+                onClick={exportLogsAsText}
+                disabled={runningTools.length === 0}
+                className="flex items-center justify-center gap-2 py-2 bg-white/5 border border-white/10 rounded text-[8px] text-white/60 uppercase font-bold tracking-widest hover:bg-white/10 hover:text-white transition-all disabled:opacity-30 disabled:cursor-not-allowed"
+              >
+                <FileText size={10} />
+                Download_Log
+              </button>
+            </div>
           </div>
         </div>
       </motion.div>
@@ -1657,12 +1966,13 @@ function App() {
       setHistoricalTimeline(null);
     }
 
+    let results: any = null;
     try {
       const isDomain = searchQuery.includes('.') && !searchQuery.includes('@');
       const isEmail = searchQuery.includes('@');
       const isUsername = !isDomain && !isEmail;
 
-      const results: any = {
+      results = {
         timestamp: new Date().toISOString(),
         target: searchQuery,
         type: isDomain ? 'Domain' : isEmail ? 'Email' : 'Username'
@@ -1713,6 +2023,7 @@ function App() {
     } finally {
       setIsScanning(false);
       setIsHistoricalScan(false);
+      if (results) setShowIntelligenceWindow(true);
     }
   };
 
@@ -1726,23 +2037,74 @@ function App() {
     setShowQuickResults(true);
     if (!deep) setQuickSocialResults([]);
 
-    const runningToolId = addRunningTool('QUICK_SOCIAL_SCAN', 'social', 'Social');
     try {
       const limit = deep ? 1200 : 100;
-      const res = await fetch(`/api/osint/social?target=${username}&limit=${limit}`);
-      if (res.ok) {
-        const data = await res.json();
+      const data = await runTool('QUICK_SOCIAL_SCAN', `/api/osint/social?target=${username}&limit=${limit}`, undefined, 'Social');
+      if (data && Array.isArray(data)) {
         const found = data.filter((s: any) => s.status === 'Found' || s.status === 'Possible but Deleted');
         setQuickSocialResults(found);
-        updateToolStatus(runningToolId, { status: 'completed', results: `Found ${found.length} profiles` });
-      } else {
-        updateToolStatus(runningToolId, { status: 'failed', results: 'API Error' });
       }
     } catch (error) {
       console.error('Quick scan failed:', error);
-      updateToolStatus(runningToolId, { status: 'failed', results: error instanceof Error ? error.message : 'Unknown error' });
     } finally {
       setIsQuickScanning(false);
+    }
+  };
+
+  const runTool = async (name: string, api: string, toolId?: string, category?: string) => {
+    const runningToolId = addRunningTool(name, 'scan', category || 'General');
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 60000); // 60s timeout
+    
+    const progressInterval = setInterval(() => {
+      setRunningTools(prev => prev.map(t => {
+        if (t.id === runningToolId && t.status === 'running' && t.progress < 90) {
+          return { ...t, progress: Math.min(95, t.progress + Math.random() * 2) };
+        }
+        return t;
+      }));
+    }, 1500);
+
+    try {
+      const res = await fetch(api, { signal: controller.signal });
+      clearTimeout(timeoutId);
+      clearInterval(progressInterval);
+      
+      if (res.ok) {
+        const data = await res.json();
+        const isSocial = name.includes('SOCIAL') || name.includes('PRESENCE');
+        const hits = isSocial && Array.isArray(data) ? data.filter((s: any) => s.status === 'Found' || s.status === 'Possible but Deleted') : [];
+        
+        updateToolStatus(runningToolId, { 
+          status: 'completed', 
+          progress: 100,
+          results: `Found ${Array.isArray(data) ? data.length : typeof data === 'object' && data !== null ? Object.keys(data).length : 0} data points`,
+          logs: isSocial && Array.isArray(data)
+            ? [`Scan complete. Found ${hits.length} active profiles.`, ...hits.map((h: any) => `HIT: ${h.name} - ${h.url}`)]
+            : [`Scan complete. Received ${Array.isArray(data) ? data.length : 'data'} results.`],
+          siteResults: isSocial ? data : []
+        });
+        
+        if (toolId) {
+          setScanResults(prev => ({
+            ...prev,
+            workflowResults: {
+              ...(prev?.workflowResults || {}),
+              [toolId]: { results: data, url: api }
+            }
+          }));
+        }
+        
+        return data;
+      }
+      updateToolStatus(runningToolId, { status: 'failed', progress: 100, results: 'API Error' });
+      return null;
+    } catch (e) {
+      clearTimeout(timeoutId);
+      clearInterval(progressInterval);
+      const errorMessage = e instanceof Error && e.name === 'AbortError' ? 'Request timed out' : e instanceof Error ? e.message : 'Unknown error';
+      updateToolStatus(runningToolId, { status: 'failed', progress: 100, results: errorMessage });
+      return null;
     }
   };
 
@@ -1754,44 +2116,28 @@ function App() {
     setIsDeepScan(deep);
     setIsHistoricalScan(false);
     setActiveTab('Scan');
-    // Don't clear results immediately to prevent flashing if we already have results for this target
+    
     if (!scanResults || scanResults.target !== searchQuery) {
       setScanResults(null);
     }
 
+    let results: any = null;
     try {
       const isDomain = searchQuery.includes('.') && !searchQuery.includes('@');
       const isEmail = searchQuery.includes('@');
       const isUsername = !isDomain && !isEmail;
 
-      const results: any = {
+      results = {
         timestamp: new Date().toISOString(),
         target: searchQuery,
         type: isDomain ? 'Domain' : isEmail ? 'Email' : 'Username'
       };
 
-      const runTool = async (name: string, api: string) => {
-        const runningToolId = addRunningTool(name, 'scan', isDomain ? 'Domain' : 'Social');
-        try {
-          const res = await fetch(api);
-          if (res.ok) {
-            const data = await res.json();
-            updateToolStatus(runningToolId, { status: 'completed', results: `Found ${Array.isArray(data) ? data.length : Object.keys(data).length} data points` });
-            return data;
-          }
-          updateToolStatus(runningToolId, { status: 'failed', results: 'API Error' });
-          return null;
-        } catch (e) {
-          updateToolStatus(runningToolId, { status: 'failed', results: e instanceof Error ? e.message : 'Unknown error' });
-          return null;
-        }
-      };
-
       if (deep) {
         const [whoisRes, dnsRes, socialRes] = await Promise.all([
-          runTool('WHOIS_LOOKUP', `/api/osint/whois?target=${searchQuery}`),
-          runTool('DNS_ENUMERATION', `/api/osint/dns?target=${searchQuery}`),
-          runTool('SOCIAL_PRESENCE', `/api/osint/social?target=${searchQuery}`)
+          runTool('WHOIS_LOOKUP', `/api/osint/whois?target=${searchQuery}`, undefined, 'Domain'),
+          runTool('DNS_ENUMERATION', `/api/osint/dns?target=${searchQuery}`, undefined, 'Domain'),
+          runTool('SOCIAL_PRESENCE', `/api/osint/social?target=${searchQuery}`, undefined, 'Social')
         ]);
         results.whois = whoisRes;
         results.dns = dnsRes;
@@ -1799,22 +2145,22 @@ function App() {
       } else {
         if (isDomain) {
           const [whoisRes, dnsRes] = await Promise.all([
-            runTool('WHOIS_LOOKUP', `/api/osint/whois?target=${searchQuery}`),
-            runTool('DNS_ENUMERATION', `/api/osint/dns?target=${searchQuery}`)
+            runTool('WHOIS_LOOKUP', `/api/osint/whois?target=${searchQuery}`, undefined, 'Domain'),
+            runTool('DNS_ENUMERATION', `/api/osint/dns?target=${searchQuery}`, undefined, 'Domain')
           ]);
           results.whois = whoisRes;
           results.dns = dnsRes;
         }
 
         if (isUsername || isEmail) {
-          results.social = await runTool('SOCIAL_PRESENCE', `/api/osint/social?target=${searchQuery}`);
+          results.social = await runTool('SOCIAL_PRESENCE', `/api/osint/social?target=${searchQuery}`, undefined, 'Social');
         }
 
         if (isEmail) {
           const [ghuntRes, epieosRes, holeheRes] = await Promise.all([
-            runTool('GHUNT_SCAN', `/api/osint/search?q=${encodeURIComponent(`"${searchQuery}" google account -inurl:login -inurl:signin -inurl:signup`)}`),
-            runTool('EPIEOS_SCAN', `/api/osint/search?q=${encodeURIComponent(`site:epieos.com "${searchQuery}"`)}`),
-            runTool('HOLEHE_SCAN', `/api/osint/search?q=${encodeURIComponent(`"${searchQuery}" account -inurl:login -inurl:signin -inurl:signup`)}`)
+            runTool('GHUNT_SCAN', `/api/osint/search?q=${encodeURIComponent(`"${searchQuery}" google account -inurl:login -inurl:signin -inurl:signup`)}`, 'ghunt', 'Email'),
+            runTool('EPIEOS_SCAN', `/api/osint/search?q=${encodeURIComponent(`site:epieos.com "${searchQuery}"`)}`, 'epieos', 'Email'),
+            runTool('HOLEHE_SCAN', `/api/osint/search?q=${encodeURIComponent(`"${searchQuery}" account -inurl:login -inurl:signin -inurl:signup`)}`, 'holehe', 'Email')
           ]);
           results.ghunt = ghuntRes;
           results.epieos = epieosRes;
@@ -1822,12 +2168,13 @@ function App() {
         }
       }
 
-      setScanResults(results);
+      setScanResults(prev => ({ ...prev, ...results }));
       setScanHistory(prev => [results, ...prev].slice(0, 10));
     } catch (error) {
       console.error('Scan failed:', error);
     } finally {
       setIsScanning(false);
+      if (results) setShowIntelligenceWindow(true);
     }
   };
 
@@ -1961,8 +2308,12 @@ function App() {
     }
   };
 
-  const handleRunDork = (query: string) => {
-    window.open(`https://www.google.com/search?q=${encodeURIComponent(query)}`, '_blank');
+  const handleRunDork = async (query: string) => {
+    setAdvancedDork(query);
+    setIsModalLoading(true);
+    setModalContent({ title: 'Google Dork Search', content: '', type: 'search', results: [] });
+    await runTool('DORK_SEARCH', `/api/osint/search?q=${encodeURIComponent(query)}`, undefined, 'Dorks');
+    setIsModalLoading(false);
   };
 
   const handleAnalystSubmit = async () => {
@@ -2002,7 +2353,6 @@ function App() {
     setIsScanning(true);
     setActiveTab('Scan');
     
-    // Don't clear results immediately to prevent flashing if we already have results for this target
     if (!scanResults || scanResults.target !== searchQuery) {
       setScanResults({
         target: searchQuery,
@@ -2015,44 +2365,41 @@ function App() {
 
     const workflowId = addRunningTool(`WORKFLOW: ${group.name}`, 'workflow', 'Workflow');
 
-    for (const id of group.toolIds) {
+    // Run tools in parallel for better performance, but keep track of progress
+    const toolPromises = group.toolIds.map(async (id) => {
       const tool = OSINT_TOOLS.find(t => t.id === id);
-      if (tool) {
-        setCurrentlyRunningToolId(id);
-        const runningToolId = addRunningTool(tool.name, 'workflow_step', tool.category);
+      if (!tool) return null;
+
+      setCurrentlyRunningToolId(id);
+      
+      // Use intelligent search queries for tools that support it
+      let api = '';
+      if (tool.id === 'ghunt') {
+        api = `/api/osint/search?q=${encodeURIComponent(`"${searchQuery}" google account -inurl:login -inurl:signin -inurl:signup`)}`;
+      } else if (tool.id === 'epieos') {
+        api = `/api/osint/search?q=${encodeURIComponent(`site:epieos.com "${searchQuery}"`)}`;
+      } else if (tool.id === 'holehe') {
+        api = `/api/osint/search?q=${encodeURIComponent(`"${searchQuery}" account -inurl:login -inurl:signin -inurl:signup`)}`;
+      } else {
         const url = tool.searchUrl ? tool.searchUrl.replace('{query}', encodeURIComponent(searchQuery)) : tool.url;
-        
-        try {
-          let results = [];
-          if (url.includes('google.com/search')) {
-            const q = new URL(url).searchParams.get('q');
-            if (q) {
-              const res = await fetch(`/api/osint/search?q=${encodeURIComponent(q)}`);
-              results = await res.json();
-            }
-          } else {
-            const res = await fetch(`/api/osint/proxy-tool?url=${encodeURIComponent(url)}`);
-            results = await res.json();
-          }
-          
-          setScanResults(prev => ({
-            ...prev,
-            workflowResults: {
-              ...(prev?.workflowResults || {}),
-              [id]: { tool, results, url }
-            }
-          }));
-          updateToolStatus(runningToolId, { status: 'completed', results: `Found ${results.length} results` });
-        } catch (error) {
-          console.error(`Workflow tool ${tool.name} failed:`, error);
-          updateToolStatus(runningToolId, { status: 'failed', results: 'Step failed' });
+        if (url.includes('google.com/search')) {
+          const q = new URL(url).searchParams.get('q');
+          api = `/api/osint/search?q=${encodeURIComponent(q || searchQuery)}`;
+        } else {
+          api = `/api/osint/proxy-tool?url=${encodeURIComponent(url)}`;
         }
-        setWorkflowProgress(prev => ({ ...prev, [id]: true }));
       }
-    }
+
+      const results = await runTool(tool.name, api, id, tool.category);
+      setWorkflowProgress(prev => ({ ...prev, [id]: true }));
+      return { id, results };
+    });
+
+    await Promise.all(toolPromises);
+
     setCurrentlyRunningToolId(null);
     setIsScanning(false);
-    updateToolStatus(workflowId, { status: 'completed', results: 'Workflow finished' });
+    updateToolStatus(workflowId, { status: 'completed', progress: 100, results: 'Workflow finished' });
   };
 
   const handleLaunchSingleInWorkflow = async (toolId: string) => {
@@ -2843,6 +3190,12 @@ function App() {
             Live_Scan_Results
           </button>
           <button 
+            onClick={() => setActiveTab('TargetIntel')}
+            className={`whitespace-nowrap px-3 md:px-6 py-2 md:py-3 font-mono text-[9px] md:text-xs uppercase tracking-widest border-b-2 transition-all ${activeTab === 'TargetIntel' ? 'border-neon-lime text-neon-lime' : 'border-transparent opacity-50 hover:opacity-100'}`}
+          >
+            Target_Intelligence
+          </button>
+          <button 
             onClick={() => setActiveTab('Intel')}
             className={`whitespace-nowrap px-3 md:px-6 py-2 md:py-3 font-mono text-[9px] md:text-xs uppercase tracking-widest border-b-2 transition-all ${activeTab === 'Intel' ? 'border-neon-yellow text-neon-yellow' : 'border-transparent opacity-50 hover:opacity-100'}`}
           >
@@ -2891,6 +3244,13 @@ function App() {
         >
           <Activity size={20} />
           <span className="text-[8px] font-mono uppercase tracking-tighter">Scan</span>
+        </button>
+        <button 
+          onClick={() => setActiveTab('TargetIntel')}
+          className={`flex flex-col items-center gap-1 p-2 transition-all ${activeTab === 'TargetIntel' ? 'text-neon-lime' : 'text-white/40'}`}
+        >
+          <Shield size={20} />
+          <span className="text-[8px] font-mono uppercase tracking-tighter">Intel_Report</span>
         </button>
         <button 
           onClick={() => setActiveTab('Intel')}
@@ -3596,432 +3956,37 @@ function App() {
                   initial={{ opacity: 0 }}
                   animate={{ opacity: 1 }}
                   transition={{ duration: 0.3 }}
-                  className="space-y-10"
+                  className="flex flex-col items-center justify-center py-20 text-center space-y-6 bg-black/40 border border-white/5 rounded-xl"
                 >
-                  {isScanning && (
-                    <div className="flex items-center gap-3 p-4 bg-neon-lime/5 border border-neon-lime/20 rounded-lg animate-pulse mb-6">
-                      <Activity size={16} className="text-neon-lime animate-spin" />
-                      <span className="text-[10px] font-mono text-neon-lime uppercase tracking-[0.3em]">
-                        {isDeepScan ? 'DEEP_INTELLIGENCE_EXTRACTION_IN_PROGRESS...' : 'SCAN_SEQUENCE_ACTIVE...'}
-                      </span>
-                    </div>
-                  )}
-                  {/* Action Bar */}
-                  <div className="flex flex-wrap items-center justify-between gap-4 border-b border-white/10 pb-6">
-                    <div className="flex items-center gap-4">
-                      <div className="p-3 bg-neon-lime/10 border border-neon-lime/30">
-                        <Shield className="text-neon-lime" size={20} />
-                      </div>
-                      <div>
-                        <h2 className="text-xl font-mono font-bold uppercase tracking-widest">Target_Intelligence_Report</h2>
-                        <p className="text-[10px] font-mono opacity-50 uppercase tracking-widest">Scan_ID: {scanResults.timestamp.replace(/[^A-Z0-9]/g, '').slice(-8)}</p>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-3">
-                      <button 
-                        onClick={sendToAnalyst}
-                        className="px-4 py-2 bg-neon-magenta/10 border border-neon-magenta/30 text-neon-magenta text-[10px] font-mono uppercase tracking-widest hover:bg-neon-magenta hover:text-black transition-all flex items-center gap-2"
-                      >
-                        <Brain size={12} />
-                        SEND_TO_AI_ANALYST
-                      </button>
-                      <button 
-                        onClick={handleGenerateDossier}
-                        disabled={isDossierLoading}
-                        className="px-4 py-2 bg-neon-cyan/10 border border-neon-cyan/30 text-neon-cyan text-[10px] font-mono uppercase tracking-widest hover:bg-neon-cyan hover:text-black transition-all flex items-center gap-2"
-                      >
-                        {isDossierLoading ? <Activity size={12} className="animate-spin" /> : <Brain size={12} />}
-                        GENERATE_DOSSIER
-                      </button>
-                      <button 
-                        onClick={exportCurrentScanResults}
-                        className="px-4 py-2 bg-neon-lime/10 border border-neon-lime/30 text-neon-lime text-[10px] font-mono uppercase tracking-widest hover:bg-neon-lime hover:text-black transition-all flex items-center gap-2"
-                      >
-                        <Download size={12} />
-                        EXPORT_JSON_RESULTS
-                      </button>
-                      <button 
-                        onClick={downloadScanLog}
-                        className="px-4 py-2 bg-white/5 border border-white/10 text-white/60 text-[10px] font-mono uppercase tracking-widest hover:bg-white/10 hover:text-white transition-all flex items-center gap-2"
-                      >
-                        <Download size={12} />
-                        DOWNLOAD_RAW_RESULTS
-                      </button>
-                    </div>
+                  <div className="p-6 bg-neon-lime/10 border-2 border-neon-lime/30 rounded-full animate-pulse">
+                    <Shield size={48} className="text-neon-lime" />
                   </div>
-
-                  {targetRiskScore && (
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-10">
-                      <div className="bg-black/40 border-2 border-neon-magenta p-6 flex flex-col items-center justify-center text-center">
-                        <span className="text-[10px] font-mono text-neon-magenta uppercase tracking-widest mb-2">VULNERABILITY_SCORE</span>
-                        <div className="text-6xl font-graffiti text-neon-magenta mb-2">{targetRiskScore.score}</div>
-                        <div className={`text-xs font-mono uppercase tracking-[0.3em] px-3 py-1 border ${
-                          targetRiskScore.level === 'Critical' ? 'bg-neon-magenta text-black border-neon-magenta' :
-                          targetRiskScore.level === 'High' ? 'text-neon-magenta border-neon-magenta' :
-                          targetRiskScore.level === 'Medium' ? 'text-neon-yellow border-neon-yellow' :
-                          'text-neon-lime border-neon-lime'
-                        }`}>
-                          {targetRiskScore.level}_RISK
-                        </div>
-                      </div>
-                      <div className="md:col-span-2 bg-black/40 border-2 border-white/10 p-6">
-                        <span className="text-[10px] font-mono text-white/40 uppercase tracking-widest mb-4 block">CRITICAL_RISK_FACTORS</span>
-                        <div className="space-y-4">
-                          {targetRiskScore.factors.map((factor, i) => (
-                            <div key={i} className="flex items-start gap-4">
-                              <div className="p-1 bg-neon-magenta/20 border border-neon-magenta/40 mt-1">
-                                <AlertTriangle size={12} className="text-neon-magenta" />
-                              </div>
-                              <p className="text-xs font-mono text-white/80 leading-relaxed uppercase">{factor}</p>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    </div>
-                  )}
-
-                  {targetDossier && (
-                    <motion.div 
-                      initial={{ opacity: 0, scale: 0.95 }}
-                      animate={{ opacity: 1, scale: 1 }}
-                      className="bg-neon-cyan/5 border-2 border-neon-cyan/30 p-8 relative overflow-hidden group"
+                  <div className="space-y-2">
+                    <h2 className="text-2xl font-mono font-bold uppercase tracking-widest text-white">Intelligence_Report_Ready</h2>
+                    <p className="text-xs font-mono text-white/40 uppercase tracking-widest">Target: {scanResults.target} // Scan_ID: {scanResults.timestamp.replace(/[^A-Z0-9]/g, '').slice(-8)}</p>
+                  </div>
+                  <button 
+                    onClick={() => setShowIntelligenceWindow(true)}
+                    className="px-8 py-4 bg-neon-lime text-black font-mono font-bold uppercase tracking-[0.2em] hover:scale-105 active:scale-95 transition-all flex items-center gap-3 shadow-[0_0_30px_rgba(57,255,20,0.3)]"
+                  >
+                    <Shield size={20} />
+                    OPEN_INTELLIGENCE_WINDOW
+                  </button>
+                  <div className="flex items-center gap-4 pt-4">
+                    <button 
+                      onClick={exportCurrentScanResults}
+                      className="text-[10px] font-mono text-white/40 hover:text-neon-lime uppercase tracking-widest transition-colors"
                     >
-                      <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
-                        <FileText size={120} />
-                      </div>
-                      <div className="flex items-center gap-3 mb-6 border-b border-neon-cyan/20 pb-4">
-                        <Brain className="text-neon-cyan" size={24} />
-                        <h3 className="text-2xl font-graffiti text-neon-cyan tracking-widest uppercase">AI_TARGET_DOSSIER</h3>
-                      </div>
-                      <div className="prose prose-invert prose-sm max-w-none font-mono text-white/90 leading-relaxed dossier-content">
-                        <Markdown>{targetDossier}</Markdown>
-                      </div>
-                      <div className="mt-8 pt-6 border-t border-neon-cyan/20 flex justify-between items-center">
-                        <p className="text-[9px] font-mono text-neon-cyan/50 uppercase tracking-[0.3em]">AI_GENERATED_INTELLIGENCE // CONFIDENTIAL</p>
-                        <button 
-                          onClick={() => {
-                            const blob = new Blob([targetDossier], { type: 'text/markdown' });
-                            const url = URL.createObjectURL(blob);
-                            const a = document.createElement('a');
-                            a.href = url;
-                            a.download = `DOSSIER_${searchQuery.replace(/[^a-z0-9]/gi, '_').toUpperCase()}.md`;
-                            a.click();
-                          }}
-                          className="text-[10px] font-mono text-neon-cyan hover:underline uppercase tracking-widest"
-                        >
-                          DOWNLOAD_MARKDOWN_REPORT
-                        </button>
-                      </div>
-                    </motion.div>
-                  )}
-
-                  {/* Scan Results Visualization */}
-                  {scanResults.social && Array.isArray(scanResults.social) && scanResults.social.length > 0 && (
-                    <ScanResultsChart data={scanResults.social} />
-                  )}
-
-                  {scanResults.social && Array.isArray(scanResults.social) && (
-                    <CollapsibleSection title="SOCIAL_FOOTPRINT" icon={User} accentColor="neon-lime">
-                      <div className="space-y-12 mt-8">
-                        {['Social', 'Chat', 'Gaming', 'Dating', 'NSFW', 'Professional', 'Creative', 'Tech', 'Other'].map(category => {
-                          const categorySites = scanResults.social.filter((s: any) => s.category === category);
-                          if (categorySites.length === 0) return null;
-                          
-                          const foundCount = categorySites.filter((s: any) => (s.status === 'Found' || s.status === 'Possible but Deleted') && !falsePositives.has(s.name)).length;
-                          
-                          return (
-                            <div key={category} className="space-y-4">
-                              <div className="flex items-center justify-between">
-                                <div className="flex items-center gap-4">
-                                  <h4 className="text-xs font-mono uppercase text-neon-cyan flex items-center gap-2">
-                                    <span className="w-2 h-2 bg-neon-cyan rounded-full animate-pulse" />
-                                    {category}_SECTOR
-                                  </h4>
-                                  {falsePositives.size > 0 && categorySites.some((s: any) => falsePositives.has(s.name)) && (
-                                    <button 
-                                      onClick={() => {
-                                        setFalsePositives(prev => {
-                                          const next = new Set(prev);
-                                          categorySites.forEach((s: any) => next.delete(s.name));
-                                          return next;
-                                        });
-                                      }}
-                                      className="text-[8px] text-neon-magenta hover:underline uppercase tracking-widest"
-                                    >
-                                      Reset_Sector_Dismissals
-                                    </button>
-                                  )}
-                                </div>
-                                <span className="text-[10px] font-mono opacity-50">
-                                  {foundCount} / {categorySites.length} IDENTIFIED
-                                </span>
-                              </div>
-                              
-                              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
-                                {foundCount === 0 ? (
-                                  <div className="col-span-full py-6 border border-dashed border-white/10 rounded flex flex-col items-center justify-center bg-black/20">
-                                    <Ghost size={20} className="text-white/10 mb-2" />
-                                    <span className="text-[9px] font-mono text-white/20 uppercase tracking-widest">No_Active_Profiles_Identified_In_This_Sector</span>
-                                  </div>
-                                ) : categorySites.map((site: any) => {
-                                  const isFalsePositive = falsePositives.has(site.name);
-                                  
-                                  if ((site.status === 'Found' || site.status === 'Possible but Deleted') && !isFalsePositive) {
-                                    const isPossible = site.status === 'Possible but Deleted';
-                                    return (
-                                      <div 
-                                        key={site.name}
-                                        className="relative group"
-                                      >
-                                        <ToolActionButton 
-                                          onClick={() => handleToolSearch(site.name, site.url)}
-                                          className={`w-full p-3 border flex flex-col gap-2 transition-all text-left ${isPossible ? 'border-neon-magenta bg-neon-magenta/5 hover:bg-neon-magenta/10' : 'border-neon-lime bg-neon-lime/5 hover:bg-neon-lime/10'}`}
-                                          tooltip={findToolByName(site.name)?.description || `Social profile on ${site.name}. Status: ${site.status}`}
-                                          howToUse={findToolByName(site.name)?.howToUse}
-                                        >
-                                          <div className="flex items-center justify-between w-full">
-                                            <div className="flex items-center gap-2">
-                                              {site.avatar && (
-                                                <img 
-                                                  src={site.avatar} 
-                                                  alt={site.name} 
-                                                  className="w-6 h-6 rounded-full border border-white/20"
-                                                  referrerPolicy="no-referrer"
-                                                />
-                                              )}
-                                              <span className="text-[10px] uppercase tracking-widest truncate mr-2">{site.name}</span>
-                                            </div>
-                                            <div className="flex items-center gap-2 shrink-0">
-                                              <span className={`text-[9px] font-bold ${isPossible ? 'text-neon-magenta' : 'text-neon-lime'}`}>
-                                                {isPossible ? 'POSSIBLE_DELETED' : 'FOUND'}
-                                              </span>
-                                              <ChevronRight size={12} className={isPossible ? 'text-neon-magenta' : 'text-neon-lime'} />
-                                            </div>
-                                          </div>
-                                          {(site.bio || site.followers) && (
-                                            <div className="space-y-1">
-                                              {site.bio && <p className="text-[9px] text-white/60 line-clamp-2 leading-tight italic">"{site.bio}"</p>}
-                                              {site.followers && <p className="text-[8px] text-neon-cyan font-mono uppercase tracking-tighter">{site.followers}</p>}
-                                            </div>
-                                          )}
-                                        </ToolActionButton>
-                                        <button
-                                          onClick={(e) => {
-                                            e.preventDefault();
-                                            setFalsePositives(prev => {
-                                              const next = new Set(prev);
-                                              next.add(site.name);
-                                              return next;
-                                            });
-                                          }}
-                                          className="absolute -top-2 -right-2 bg-black border border-white/20 p-1 rounded-full opacity-0 group-hover:opacity-100 hover:bg-red-500/20 hover:border-red-500/50 transition-all z-10"
-                                          title="Mark as False Positive"
-                                        >
-                                          <XCircle size={10} className="text-white/40 hover:text-red-500" />
-                                        </button>
-                                      </div>
-                                    );
-                                  }
-                                  
-                                  return (
-                                    <div key={site.name} className={`p-3 border border-white/5 flex items-center justify-between grayscale ${isFalsePositive ? 'opacity-10' : 'opacity-20'}`}>
-                                      <span className="text-[10px] uppercase tracking-widest truncate mr-2">{site.name}</span>
-                                      <div className="flex items-center gap-2">
-                                        <span className="text-[9px] text-white/40 shrink-0">{isFalsePositive ? 'DISMISSED' : 'NOT_FOUND'}</span>
-                                        {isFalsePositive && (
-                                          <button
-                                            onClick={() => {
-                                              setFalsePositives(prev => {
-                                                const next = new Set(prev);
-                                                next.delete(site.name);
-                                                return next;
-                                              });
-                                            }}
-                                            className="text-[8px] text-neon-cyan hover:underline uppercase"
-                                          >
-                                            Restore
-                                          </button>
-                                        )}
-                                      </div>
-                                    </div>
-                                  );
-                                })}
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </CollapsibleSection>
-                  )}
-
-                  <CollapsibleSection title="BREACH_INTELLIGENCE" icon={Zap} accentColor="neon-magenta">
-                    <div className="space-y-6 mt-8">
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        <div className="p-4 bg-red-500/5 border border-red-500/20 rounded">
-                          <h5 className="text-[10px] text-red-400 font-bold mb-2 uppercase">Potential_Data_Leaks</h5>
-                          <p className="text-[9px] opacity-70 mb-3 font-mono">Check if this identity has been involved in known data breaches.</p>
-                          <button 
-                            onClick={() => handleBreachQuery('HIBP', `https://haveibeenpwned.com/account/${scanResults.target}`)}
-                            className="inline-block px-3 py-1 bg-red-500/20 text-red-400 text-[9px] border border-red-500/30 hover:bg-red-500/40 transition-all"
-                          >
-                            RUN_HIBP_QUERY
-                          </button>
-                        </div>
-                        <div className="p-4 bg-neon-cyan/5 border border-neon-cyan/20 rounded">
-                          <h5 className="text-[10px] text-neon-cyan font-bold mb-2 uppercase">Identity_Verification</h5>
-                          <p className="text-[9px] opacity-70 mb-3 font-mono">Verify identity across public records and leaked databases.</p>
-                          <button 
-                            onClick={() => handleBreachQuery('IntelX', `https://intelx.io/?s=${scanResults.target}`)}
-                            className="inline-block px-3 py-1 bg-neon-cyan/20 text-neon-cyan text-[9px] border border-neon-cyan/30 hover:bg-neon-cyan/40 transition-all"
-                          >
-                            QUERY_INTELX_DB
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  </CollapsibleSection>
-
-                  {scanResults.workflowResults && (
-                    <CollapsibleSection title="WORKFLOW_INTELLIGENCE" icon={Zap} accentColor="neon-magenta">
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-8">
-                        {Object.keys(scanResults.workflowResults).length === 0 ? (
-                          <div className="col-span-full py-12 border border-dashed border-white/10 rounded flex flex-col items-center justify-center bg-black/20">
-                            <Zap size={32} className="text-white/10 mb-4 animate-pulse" />
-                            <p className="text-xs font-mono text-white/40 uppercase tracking-widest">No_Workflow_Intelligence_Identified</p>
-                            <p className="text-[10px] font-mono text-white/20 uppercase tracking-widest mt-2">Select_a_Tool_Group_to_Extract_Deeper_Insights</p>
-                          </div>
-                        ) : Object.entries(scanResults.workflowResults).map(([id, data]: [string, any]) => (
-                          <div key={id} className="bg-white/5 border border-white/10 p-6 hover:border-neon-magenta/50 transition-all">
-                            <div className="flex items-center gap-3 mb-4">
-                              <div className="p-2 bg-neon-magenta/10 border border-neon-magenta/30">
-                                <Favicon url={data.tool.url} name={data.tool.name} className="w-4 h-4" />
-                              </div>
-                              <h4 className="text-sm font-mono font-bold text-neon-magenta uppercase">{data.tool.name}</h4>
-                            </div>
-                            <div className="space-y-3 max-h-60 overflow-y-auto custom-scrollbar pr-2">
-                              {data.results && data.results.length > 0 ? (
-                                data.results.map((res: any, i: number) => (
-                                  <div key={i} className="text-[10px] font-mono border-b border-white/5 pb-2 last:border-0">
-                                    <div className="text-white/80 mb-1">{res.title}</div>
-                                    <div className="text-white/40 line-clamp-1">{res.snippet}</div>
-                                  </div>
-                                ))
-                              ) : (
-                                <p className="text-[10px] font-mono opacity-40 italic">No direct hits in this sector</p>
-                              )}
-                            </div>
-                            <button 
-                              onClick={() => setModalContent({ title: `${data.tool.name} Results`, content: '', type: 'tool', results: data.results, url: data.url })}
-                              className="mt-4 w-full py-2 border border-neon-magenta/30 text-[9px] font-mono text-neon-magenta uppercase hover:bg-neon-magenta hover:text-black transition-all"
-                            >
-                              VIEW_FULL_DATASET
-                            </button>
-                          </div>
-                        ))}
-                      </div>
-                    </CollapsibleSection>
-                  )}
-
-                  {scanResults.whois && (
-                    <CollapsibleSection title="WHOIS_DATA" icon={Globe} accentColor="neon-cyan">
-                      {scanResults.whois.error ? (
-                        <div className="p-6 border border-dashed border-neon-magenta/30 bg-neon-magenta/5 text-center">
-                          <AlertTriangle size={24} className="text-neon-magenta mx-auto mb-2" />
-                          <p className="text-xs font-mono text-neon-magenta uppercase tracking-widest">Whois_Lookup_Failed</p>
-                          <p className="text-[10px] font-mono text-white/40 mt-1">{scanResults.whois.error}</p>
-                        </div>
-                      ) : (
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 bg-white/5 p-6 border border-white/10">
-                          {Object.entries(scanResults.whois).map(([key, val]: [string, any]) => (
-                            val && typeof val === 'string' && (
-                              <div key={key} className="flex flex-col">
-                                <span className="text-[10px] opacity-40 uppercase">{key}</span>
-                                <span className="text-xs text-neon-cyan break-all">{val}</span>
-                              </div>
-                            )
-                          ))}
-                        </div>
-                      )}
-                    </CollapsibleSection>
-                  )}
-
-                  {Array.isArray(scanResults.dns) && (
-                    <CollapsibleSection title="DNS_RECORDS" icon={Layers} accentColor="neon-magenta">
-                      <div className="space-y-2 bg-white/5 p-6 border border-white/10">
-                        {scanResults.dns.length === 0 ? (
-                          <div className="py-4 text-center opacity-40 italic text-[10px] font-mono">
-                            NO_DNS_RECORDS_IDENTIFIED_FOR_THIS_TARGET
-                          </div>
-                        ) : scanResults.dns.map((record: any, i: number) => (
-                          <div key={i} className="text-xs flex gap-4 border-b border-white/5 pb-2 last:border-0">
-                            <span className="text-neon-magenta w-12 font-bold">{record.type || 'REC'}</span>
-                            <span className="opacity-80 font-mono break-all">{typeof record.value === 'string' ? record.value : JSON.stringify(record.value || record.address || record)}</span>
-                          </div>
-                        ))}
-                      </div>
-                    </CollapsibleSection>
-                  )}
-
-                  {isTimelineLoading && (
-                    <div className="flex flex-col items-center justify-center p-12 border border-neon-lime/20 bg-black/40 rounded-lg animate-pulse">
-                      <Zap className="text-neon-lime mb-4 animate-bounce" size={32} />
-                      <p className="text-neon-lime text-xs font-mono uppercase tracking-[0.3em]">Retrieving_Historical_Timeline...</p>
-                    </div>
-                  )}
-
-                  {historicalTimeline && (
-                    <CollapsibleSection title="HISTORICAL_TIMELINE_REPORT" icon={Zap} accentColor="neon-lime">
-                      <div className="space-y-6 mt-8">
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
-                          <div className="p-4 bg-white/5 border border-white/10 rounded">
-                            <span className="text-[10px] opacity-40 uppercase block mb-1">First_Seen_Snapshot</span>
-                            <span className="text-neon-cyan font-bold block">{historicalTimeline.firstSeen || 'N/A'}</span>
-                          </div>
-                          <div className="p-4 bg-white/5 border border-white/10 rounded">
-                            <span className="text-[10px] opacity-40 uppercase block mb-1">Last_Seen_Snapshot</span>
-                            <span className="text-neon-lime font-bold block">{historicalTimeline.lastSeen || 'N/A'}</span>
-                          </div>
-                        </div>
-
-                        <div className="space-y-4">
-                          <h4 className="text-[10px] font-mono uppercase text-white/50 border-b border-white/10 pb-2">Activity_Timeline</h4>
-                          <div className="max-h-[400px] overflow-y-auto pr-2 space-y-2 custom-scrollbar">
-                            {historicalTimeline.timeline && historicalTimeline.timeline.length > 0 ? (
-                              historicalTimeline.timeline.map((entry: any, i: number) => (
-                                <a 
-                                  key={i} 
-                                  href={`https://web.archive.org/web/${entry.timestamp}/${searchQuery}`}
-                                  target="_blank" 
-                                  rel="noreferrer"
-                                  className="flex items-center justify-between p-4 bg-white/5 border border-white/5 hover:border-neon-lime/50 hover:bg-neon-lime/5 transition-all group cursor-pointer"
-                                >
-                                  <div className="flex items-center gap-4">
-                                    <div className="w-2 h-2 rounded-full bg-neon-lime animate-pulse" />
-                                    <span className="text-[10px] font-mono text-neon-lime font-bold">{entry.formattedDate}</span>
-                                    <span className={`text-[9px] px-2 py-0.5 rounded font-bold ${entry.status === '200' ? 'bg-green-500/20 text-green-400' : 'bg-yellow-500/20 text-yellow-400'}`}>
-                                      HTTP_{entry.status}
-                                    </span>
-                                  </div>
-                                  <div className="flex items-center gap-2 text-[9px] text-neon-cyan font-mono uppercase tracking-widest opacity-0 group-hover:opacity-100 transition-opacity">
-                                    OPEN_SNAPSHOT
-                                    <ExternalLink size={12} />
-                                  </div>
-                                </a>
-                              ))
-                            ) : (
-                              <p className="text-[10px] opacity-50 italic py-4 text-center">No historical snapshots found for this target.</p>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                    </CollapsibleSection>
-                  )}
-
-                  {Array.isArray(scanResults.social) && (
-                    <div className="hidden">
-                      {/* Old social results removed in favor of categorized display above */}
-                    </div>
-                  )}
+                      Export_JSON
+                    </button>
+                    <div className="w-1 h-1 bg-white/20 rounded-full" />
+                    <button 
+                      onClick={downloadScanLog}
+                      className="text-[10px] font-mono text-white/40 hover:text-neon-lime uppercase tracking-widest transition-colors"
+                    >
+                      Download_Raw_Log
+                    </button>
+                  </div>
                 </motion.div>
               ) : (
                 <div className="flex flex-col items-center justify-center min-h-[400px] opacity-20">
@@ -4416,6 +4381,289 @@ function App() {
                   <p className="font-mono text-xl uppercase tracking-[0.3em] text-center px-12">
                     {isGeneratingDorks ? 'NEURAL_NETWORK_PROCESSING...' : 'AWAITING_SYNTHESIS_PARAMETERS...'}
                   </p>
+                </div>
+              )}
+            </motion.div>
+          ) : activeTab === 'TargetIntel' ? (
+            <motion.div
+              key="target-intel"
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -20 }}
+              className="space-y-12"
+            >
+              <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-6 border-b border-white/10 pb-8">
+                <div>
+                  <h2 className="text-4xl font-graffiti tracking-widest uppercase mb-2 text-neon-lime">Target_Intelligence_Report</h2>
+                  <p className="font-mono text-xs text-white/40 uppercase tracking-[0.2em]">
+                    {scanResults ? `Target: ${scanResults.target} // Scan_ID: ${scanResults.timestamp.replace(/[^A-Z0-9]/g, '').slice(-8)}` : 'Awaiting_Target_Input_Sequence...'}
+                  </p>
+                </div>
+                {scanResults && (
+                  <div className="flex items-center gap-4">
+                    <button 
+                      onClick={exportCurrentScanResults}
+                      className="px-4 py-2 border border-neon-lime/30 text-[10px] font-mono text-neon-lime uppercase tracking-widest hover:bg-neon-lime hover:text-black transition-all"
+                    >
+                      Export_JSON
+                    </button>
+                    <button 
+                      onClick={downloadScanLog}
+                      className="px-4 py-2 border border-white/10 text-[10px] font-mono text-white/40 uppercase tracking-widest hover:border-white/40 transition-all"
+                    >
+                      Download_Raw_Log
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {!scanResults ? (
+                <div className="flex flex-col items-center justify-center py-32 text-center opacity-20">
+                  <Shield size={64} className="mb-6" />
+                  <p className="text-xl uppercase tracking-[0.3em] font-bold">No Intelligence Data Available</p>
+                  <p className="text-xs mt-2 uppercase tracking-widest">Initiate a scan to generate a target dossier</p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-12">
+                  {/* Left Column: Risk & AI Dossier */}
+                  <div className="lg:col-span-2 space-y-12">
+                    {/* Risk Score */}
+                    {targetRiskScore && (
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                        <div className="bg-black/40 border-2 border-neon-magenta p-8 flex flex-col items-center justify-center text-center rounded-xl">
+                          <span className="text-[10px] font-mono text-neon-magenta uppercase tracking-widest mb-4">VULNERABILITY_SCORE</span>
+                          <div className="text-7xl font-graffiti text-neon-magenta mb-4">{targetRiskScore.score}</div>
+                          <div className={`text-xs font-mono uppercase tracking-[0.3em] px-4 py-2 border-2 ${
+                            targetRiskScore.level === 'Critical' ? 'bg-neon-magenta text-black border-neon-magenta' :
+                            targetRiskScore.level === 'High' ? 'text-neon-magenta border-neon-magenta' :
+                            targetRiskScore.level === 'Medium' ? 'text-neon-yellow border-neon-yellow' :
+                            'text-neon-lime border-neon-lime'
+                          }`}>
+                            {targetRiskScore.level}_RISK
+                          </div>
+                        </div>
+                        <div className="md:col-span-2 bg-black/40 border-2 border-white/10 p-8 rounded-xl">
+                          <span className="text-[10px] font-mono text-white/40 uppercase tracking-widest mb-6 block">CRITICAL_RISK_FACTORS</span>
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                            {targetRiskScore.factors.map((factor, i) => (
+                              <div key={i} className="flex items-start gap-4">
+                                <div className="p-1.5 bg-neon-magenta/20 border border-neon-magenta/40 mt-1">
+                                  <AlertTriangle size={14} className="text-neon-magenta" />
+                                </div>
+                                <p className="text-xs font-mono text-white/80 leading-relaxed uppercase">{factor}</p>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* AI Dossier */}
+                    {targetDossier && (
+                      <div className="bg-neon-cyan/5 border-2 border-neon-cyan/30 p-8 relative overflow-hidden group rounded-xl">
+                        <div className="flex items-center gap-4 mb-8 border-b border-neon-cyan/20 pb-6">
+                          <Brain className="text-neon-cyan" size={24} />
+                          <h3 className="text-2xl font-graffiti text-neon-cyan tracking-widest uppercase">AI_TARGET_DOSSIER_v1.0</h3>
+                        </div>
+                        <div className="prose prose-invert prose-sm max-w-none font-mono text-white/90 leading-relaxed dossier-content-large">
+                          <Markdown>{targetDossier}</Markdown>
+                        </div>
+                        <div className="mt-8 pt-6 border-t border-neon-cyan/20 flex justify-between items-center">
+                          <p className="text-[10px] font-mono text-neon-cyan/50 uppercase tracking-[0.3em]">NEURAL_EXTRACTION_COMPLETE // CONFIDENTIAL</p>
+                          <button 
+                            onClick={() => {
+                              const blob = new Blob([targetDossier], { type: 'text/markdown' });
+                              const url = URL.createObjectURL(blob);
+                              const a = document.createElement('a');
+                              a.href = url;
+                              a.download = `DOSSIER_${scanResults.target.replace(/[^a-z0-9]/gi, '_').toUpperCase()}.md`;
+                              a.click();
+                            }}
+                            className="text-[10px] font-mono text-neon-cyan hover:underline uppercase tracking-widest"
+                          >
+                            DOWNLOAD_MD_REPORT
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* AI Suggestions & Actions */}
+                    {(aiSuggestions.length > 0 || aiActions.length > 0) && (
+                      <div className="space-y-8 pt-12 border-t border-white/10">
+                        <div className="flex items-center gap-4">
+                          <Sparkles className="text-neon-yellow" size={24} />
+                          <h3 className="text-2xl font-graffiti text-neon-yellow tracking-widest uppercase">AI_STRATEGIC_RECOMMENDATIONS</h3>
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                          {aiSuggestions.map((suggestion, i) => (
+                            <div key={i} className="bg-black/40 border border-neon-yellow/30 p-6 rounded-xl relative group hover:border-neon-yellow transition-all">
+                              <div className="flex items-start justify-between mb-4">
+                                <h4 className="text-sm font-mono text-neon-yellow uppercase tracking-widest">{suggestion.name}</h4>
+                                {suggestion.directLink && (
+                                  <a 
+                                    href={suggestion.directLink} 
+                                    target="_blank" 
+                                    rel="noopener noreferrer"
+                                    className="p-1.5 bg-neon-yellow/10 border border-neon-yellow/20 text-neon-yellow hover:bg-neon-yellow hover:text-black transition-all rounded"
+                                  >
+                                    <ExternalLink size={12} />
+                                  </a>
+                                )}
+                              </div>
+                              <p className="text-[10px] font-mono text-white/60 leading-relaxed uppercase">
+                                <span className="text-neon-yellow/40 mr-2">REASON:</span>
+                                {suggestion.reason}
+                              </p>
+                            </div>
+                          ))}
+                        </div>
+
+                        {aiActions.length > 0 && (
+                          <div className="bg-neon-magenta/5 border border-neon-magenta/30 p-6 rounded-xl">
+                            <div className="flex items-center gap-3 mb-4">
+                              <Terminal size={16} className="text-neon-magenta" />
+                              <h4 className="text-[10px] font-mono text-neon-magenta uppercase tracking-[0.3em]">AUTONOMOUS_EXECUTION_LOG</h4>
+                            </div>
+                            <div className="space-y-2">
+                              {aiActions.map((action, i) => (
+                                <div key={i} className="flex items-center gap-3 text-[9px] font-mono text-white/40 uppercase">
+                                  <span className="text-neon-magenta opacity-50">[{new Date().toLocaleTimeString()}]</span>
+                                  <span className="text-white/80">{action}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Right Column: Social & Breach */}
+                  <div className="space-y-12">
+                    {/* Social Footprint */}
+                    {scanResults.social && Array.isArray(scanResults.social) && (
+                      <div className="space-y-8">
+                        <div className="flex items-center gap-4 border-b border-white/10 pb-4">
+                          <User size={20} className="text-neon-lime" />
+                          <h4 className="text-sm font-mono uppercase tracking-widest text-white">Digital_Footprint</h4>
+                        </div>
+                        <div className="space-y-10">
+                          {['Social', 'Chat', 'Gaming', 'Dating', 'NSFW', 'Professional', 'Creative', 'Tech', 'Other'].map(category => {
+                            const categorySites = scanResults.social.filter((s: any) => s.category === category);
+                            if (categorySites.length === 0) return null;
+                            
+                            const foundCount = categorySites.filter((s: any) => (s.status === 'Found' || s.status === 'Possible but Deleted') && !falsePositives.has(s.name)).length;
+                            
+                            return (
+                              <div key={category} className="space-y-4">
+                                <div className="flex items-center justify-between">
+                                  <h5 className="text-[10px] font-mono uppercase text-neon-cyan flex items-center gap-2">
+                                    <span className="w-2 h-2 bg-neon-cyan rounded-full animate-pulse" />
+                                    {category}_SECTOR
+                                  </h5>
+                                  <span className="text-[9px] font-mono opacity-50">
+                                    {foundCount} / {categorySites.length} IDENTIFIED
+                                  </span>
+                                </div>
+                                
+                                <div className="grid grid-cols-1 gap-3">
+                                  {foundCount === 0 ? (
+                                    <div className="py-6 border border-dashed border-white/10 rounded-lg flex flex-col items-center justify-center bg-black/20">
+                                      <span className="text-[9px] font-mono text-white/20 uppercase tracking-widest">No_Active_Profiles</span>
+                                    </div>
+                                  ) : categorySites.map((site: any) => {
+                                    const isFalsePositive = falsePositives.has(site.name);
+                                    if ((site.status === 'Found' || site.status === 'Possible but Deleted') && !isFalsePositive) {
+                                      const isPossible = site.status === 'Possible but Deleted';
+                                      return (
+                                        <div 
+                                          key={site.name}
+                                          className={`p-3 border-2 flex items-center justify-between transition-all rounded-lg ${isPossible ? 'border-neon-magenta/30 bg-neon-magenta/5 hover:border-neon-magenta/60' : 'border-neon-lime/30 bg-neon-lime/5 hover:border-neon-lime/60'}`}
+                                        >
+                                          <div className="flex items-center gap-3">
+                                            {site.avatar && (
+                                              <img 
+                                                src={site.avatar} 
+                                                alt={site.name} 
+                                                className="w-6 h-6 rounded-full border border-white/20"
+                                                referrerPolicy="no-referrer"
+                                              />
+                                            )}
+                                            <span className="text-[10px] uppercase tracking-widest truncate max-w-[150px]">{site.name}</span>
+                                          </div>
+                                          <div className="flex items-center gap-3">
+                                            <span className={`text-[9px] font-black ${isPossible ? 'text-neon-magenta' : 'text-neon-lime'}`}>
+                                              {isPossible ? 'POSSIBLE' : 'FOUND'}
+                                            </span>
+                                            <button 
+                                              onClick={() => handleToolSearch(site.name, site.url)}
+                                              className="p-1.5 hover:bg-white/10 rounded transition-colors"
+                                            >
+                                              <ExternalLink size={14} className="text-white/40" />
+                                            </button>
+                                          </div>
+                                        </div>
+                                      );
+                                    }
+                                    return null;
+                                  })}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Breach Intelligence */}
+                    <div className="space-y-6">
+                      <div className="flex items-center gap-4 border-b border-white/10 pb-4">
+                        <Zap size={20} className="text-neon-magenta" />
+                        <h4 className="text-sm font-mono uppercase tracking-widest text-white">Breach_Intelligence</h4>
+                      </div>
+                      <div className="grid grid-cols-1 gap-4">
+                        <div className="p-4 bg-red-500/5 border-2 border-red-500/20 rounded-xl">
+                          <h5 className="text-[10px] text-red-400 font-black mb-3 uppercase tracking-widest">Potential_Data_Leaks</h5>
+                          <button 
+                            onClick={() => handleBreachQuery('HIBP', `https://haveibeenpwned.com/account/${scanResults.target}`)}
+                            className="w-full py-2 bg-red-500/20 text-red-400 text-[9px] border border-red-500/30 hover:bg-red-500/40 transition-all uppercase tracking-[0.2em] font-bold"
+                          >
+                            RUN_HIBP_QUERY
+                          </button>
+                        </div>
+                        <div className="p-4 bg-neon-cyan/5 border-2 border-neon-cyan/20 rounded-xl">
+                          <h5 className="text-[10px] text-neon-cyan font-black mb-3 uppercase tracking-widest">Identity_Verification</h5>
+                          <button 
+                            onClick={() => handleBreachQuery('IntelX', `https://intelx.io/?s=${scanResults.target}`)}
+                            className="w-full py-2 bg-neon-cyan/20 text-neon-cyan text-[9px] border border-neon-cyan/30 hover:bg-neon-cyan/40 transition-all uppercase tracking-[0.2em] font-bold"
+                          >
+                            QUERY_INTELX_DB
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* WHOIS */}
+                    {scanResults.whois && !scanResults.whois.error && (
+                      <div className="space-y-6">
+                        <div className="flex items-center gap-4 border-b border-white/10 pb-4">
+                          <Globe size={20} className="text-neon-cyan" />
+                          <h4 className="text-sm font-mono uppercase tracking-widest text-white">Whois_Data_Extraction</h4>
+                        </div>
+                        <div className="grid grid-cols-1 gap-3 bg-white/5 p-6 border-2 border-white/10 rounded-xl">
+                          {Object.entries(scanResults.whois).map(([key, val]: [string, any]) => (
+                            val && typeof val === 'string' && (
+                              <div key={key} className="flex justify-between items-center gap-6 text-[10px] font-mono border-b border-white/5 pb-2 last:border-0 last:pb-0">
+                                <span className="opacity-40 uppercase tracking-tighter">{key}</span>
+                                <span className="text-neon-cyan truncate max-w-[250px] font-bold">{val}</span>
+                              </div>
+                            )
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 </div>
               )}
             </motion.div>
@@ -4862,7 +5110,41 @@ function App() {
           }} />
         )}
       </AnimatePresence>
+      
+      {/* Floating Monitor Toggle */}
+      <div className="fixed bottom-6 right-6 z-[110] flex flex-col gap-4">
+        <button
+          onClick={() => setShowIntelligenceWindow(!showIntelligenceWindow)}
+          className={`p-4 rounded-full shadow-2xl transition-all duration-300 group ${
+            showIntelligenceWindow 
+              ? 'bg-neon-lime text-black' 
+              : 'bg-neon-lime/20 text-neon-lime hover:bg-neon-lime/40 hover:scale-110'
+          }`}
+          title="Toggle Intelligence Report"
+        >
+          {showIntelligenceWindow ? <X size={24} /> : <Shield size={24} />}
+        </button>
+        
+        <button
+          onClick={() => setShowStatusWindow(!showStatusWindow)}
+          className={`p-4 rounded-full shadow-2xl transition-all duration-300 group ${
+            showStatusWindow 
+              ? 'bg-neon-magenta text-black rotate-90' 
+              : 'bg-neon-cyan text-black hover:scale-110'
+          }`}
+          title="Toggle Live Ops Monitor"
+        >
+          {showStatusWindow ? <X size={24} /> : <Activity size={24} className={runningTools.some(t => t.status === 'running') ? 'animate-pulse' : ''} />}
+          {!showStatusWindow && runningTools.some(t => t.status === 'running') && (
+            <span className="absolute -top-1 -right-1 w-4 h-4 bg-neon-magenta rounded-full flex items-center justify-center text-[10px] font-bold animate-bounce">
+              {runningTools.filter(t => t.status === 'running').length}
+            </span>
+          )}
+        </button>
+      </div>
+
       <StatusWindow />
+      <IntelligenceWindow />
     </div>
   );
 }
