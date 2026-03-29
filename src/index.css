@@ -1,0 +1,96 @@
+@import "tailwindcss";
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Permanent+Marker&family=Rock+Salt&display=swap');
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+  --font-graffiti: "Permanent Marker", cursive;
+  --font-street: "Rock Salt", cursive;
+  
+  --color-neon-cyan: var(--neon-cyan);
+  --color-neon-magenta: var(--neon-magenta);
+  --color-neon-lime: var(--neon-lime);
+  --color-neon-yellow: var(--neon-yellow);
+
+  --color-bg-primary: var(--bg-primary);
+  --color-bg-secondary: var(--bg-secondary);
+  --color-text-primary: var(--text-primary);
+  --color-text-secondary: var(--text-secondary);
+  --color-border-primary: var(--border-primary);
+}
+
+@layer base {
+  :root {
+    --bg-primary: #1a1a1a;
+    --bg-secondary: #242424;
+    --text-primary: #ffffff;
+    --text-secondary: rgba(255, 255, 255, 0.6);
+    --border-primary: rgba(255, 255, 255, 0.1);
+    --neon-cyan: #00f3ff;
+    --neon-magenta: #ff00ff;
+    --neon-lime: #39ff14;
+    --neon-yellow: #fff200;
+    --brick-color: #ffffff;
+  }
+
+  :root[data-theme='light'] {
+    --bg-primary: #fff5f5;
+    --bg-secondary: #ffebeb;
+    --text-primary: #4a0404;
+    --text-secondary: rgba(74, 4, 4, 0.7);
+    --border-primary: rgba(74, 4, 4, 0.1);
+    --neon-cyan: #d01010; /* Darker red for light mode */
+    --neon-magenta: #be185d;
+    --neon-lime: #15803d;
+    --neon-yellow: #a16207;
+    --brick-color: #4a0404;
+  }
+
+  body {
+    background-color: var(--bg-primary);
+    color: var(--text-primary);
+    transition: background-color 0.3s ease, color 0.3s ease;
+    background-image: 
+      linear-gradient(rgba(0, 0, 0, 0.7), rgba(0, 0, 0, 0.7)),
+      url('https://images.unsplash.com/photo-1589939705384-5185137a7f0f?q=80&w=2070&auto=format&fit=crop');
+    background-size: cover;
+    background-attachment: fixed;
+  }
+}
+
+.neon-glow-cyan {
+  text-shadow: 0 0 5px var(--color-neon-cyan), 0 0 10px var(--color-neon-cyan);
+}
+
+.neon-glow-magenta {
+  text-shadow: 0 0 5px var(--color-neon-magenta), 0 0 10px var(--color-neon-magenta);
+}
+
+.neon-border-cyan {
+  box-shadow: 0 0 5px var(--color-neon-cyan), inset 0 0 5px var(--color-neon-cyan);
+  border-color: var(--color-neon-cyan);
+}
+
+.paint-splash {
+  mask-image: url('https://www.transparentpng.com/download/paint-splash/paint-splash-png-transparent-images--22.png');
+  mask-size: contain;
+  mask-repeat: no-repeat;
+}
+
+.brick-overlay {
+  background-image: url("data:image/svg+xml,%3Csvg width='42' height='44' viewBox='0 0 42 44' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%234a0404' fill-opacity='0.05'%3E%3Cpath d='M0 0h42v44H0V0zm1 1h40v42H1V1zM0 22h42v2H0v-2zm21 0h2v22h-2V22zm0-22h2v22h-2V0z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E");
+}
+
+:root[data-theme='dark'] .brick-overlay {
+  background-image: url("data:image/svg+xml,%3Csvg width='42' height='44' viewBox='0 0 42 44' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23ffffff' fill-opacity='0.05'%3E%3Cpath d='M0 0h42v44H0V0zm1 1h40v42H1V1zM0 22h42v2H0v-2zm21 0h2v22h-2V22zm0-22h2v22h-2V0z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E");
+}
+
+@keyframes loading-bar {
+  0% { transform: translateX(-100%); }
+  50% { transform: translateX(0); }
+  100% { transform: translateX(100%); }
+}
+
+.animate-loading-bar {
+  animation: loading-bar 2s infinite linear;
+}
