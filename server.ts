@@ -419,6 +419,27 @@ async function startServer() {
     }
   });
 
+  app.get('/api/osint/breach', async (req, res) => {
+    const { target, tool } = req.query;
+    if (!target) return res.status(400).json({ error: 'Target required' });
+    
+    try {
+      // For now, we'll use our search engine scraper to find breach info if no API key is present
+      // This is more reliable than proxying the main site which often has anti-bot protections
+      const query = tool === 'leakcheck' 
+        ? `site:leakcheck.io "${target}"` 
+        : tool === 'hibp' 
+          ? `site:haveibeenpwned.com "${target}"`
+          : `"${target}" data breach leak`;
+          
+      const searchResults = await scrapeSearchEngines(query);
+      res.json(searchResults);
+    } catch (error) {
+      console.error('Breach search error:', error);
+      res.status(500).json({ error: 'Breach search failed' });
+    }
+  });
+
   app.get('/api/osint/social', async (req, res) => {
     const { target, limit: queryLimit } = req.query;
     if (!target) return res.status(400).json({ error: 'Username required' });

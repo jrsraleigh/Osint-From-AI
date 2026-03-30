@@ -997,7 +997,16 @@ function App() {
     setModalContent({ title: `${toolName} Query`, content: '', type: 'tool', results: [], url });
     const runningToolId = addRunningTool(toolName, 'breach_query', 'Breach');
     try {
-      const res = await fetch(`/api/osint/proxy-tool?url=${encodeURIComponent(url)}`);
+      let api = `/api/osint/proxy-tool?url=${encodeURIComponent(url)}`;
+      if (url.includes('haveibeenpwned.com')) {
+        const target = url.split('/').pop() || '';
+        api = `/api/osint/breach?target=${encodeURIComponent(target)}&tool=hibp`;
+      } else if (url.includes('leakcheck.io')) {
+        const target = new URL(url).searchParams.get('q') || '';
+        api = `/api/osint/breach?target=${encodeURIComponent(target)}&tool=leakcheck`;
+      }
+      
+      const res = await fetch(api);
       if (res.ok) {
         const data = await res.json();
         setModalContent({ title: `${toolName} Query`, content: '', type: 'tool', results: data, url });
@@ -1938,6 +1947,15 @@ function App() {
         api = `/api/osint/search?q=${encodeURIComponent(`site:epieos.com "${searchQuery}"`)}`;
       } else if (tool.id === 'holehe') {
         api = `/api/osint/search?q=${encodeURIComponent(`"${searchQuery}" account -inurl:login -inurl:signin -inurl:signup`)}`;
+      } else if (tool.id === '10') { // Whois.com
+        api = `/api/osint/whois?target=${encodeURIComponent(searchQuery)}`;
+      } else if (tool.id === '2') { // Sherlock
+        api = `/api/osint/social?target=${encodeURIComponent(searchQuery)}`;
+      } else if (['6', '26', '62', '63', '64', '65'].includes(tool.id)) { // Breach tools
+        const toolName = tool.id === '26' ? 'leakcheck' : tool.id === '6' || tool.id === '62' ? 'hibp' : 'generic';
+        api = `/api/osint/breach?target=${encodeURIComponent(searchQuery)}&tool=${toolName}`;
+      } else if (tool.id === '3' || tool.id === '61') { // Wayback Machine or Wayback Timeline
+        api = `/api/osint/wayback-timeline?url=${encodeURIComponent(searchQuery)}`;
       } else {
         const url = tool.searchUrl ? tool.searchUrl.replace('{query}', encodeURIComponent(searchQuery)) : tool.url;
         if (url.includes('google.com/search')) {
