@@ -74,6 +74,35 @@ import { OSINT_TOOLS, TOOL_GROUPS, GLOBAL_SOCIAL_NSFW_DORK } from './constants';
 import { OSINTCategory, OSINTTool, ToolGroup } from './types';
 import Markdown from 'react-markdown';
 
+interface IntelligenceWindowProps {
+  isOpen: boolean;
+  onClose: () => void;
+  scanResults: any;
+  isScanning: boolean;
+  isDeepScan: boolean;
+  targetRiskScore: { score: number; level: string; factors: string[] } | null;
+  targetDossier: string | null;
+  falsePositives: Set<string>;
+  onToolSearch: (toolOrName: OSINTTool | string, customUrl?: string) => void;
+  onBreachQuery: (toolName: string, url: string) => void;
+  onExportJSON: () => void;
+  onDownloadLog: () => void;
+  searchQuery: string;
+  aiSuggestions: {name: string, reason: string, directLink?: string}[];
+  aiActions: string[];
+}
+
+interface StatusWindowProps {
+  isOpen: boolean;
+  onClose: () => void;
+  runningTools: any[];
+  onClearLogs: () => void;
+  expandedToolId: string | null;
+  setExpandedToolId: (id: string | null) => void;
+  onExportJSON: () => void;
+  onDownloadLog: () => void;
+}
+
 const CATEGORIES: OSINTCategory[] = [
   'Search Engines',
   'Social Media',
@@ -485,8 +514,14 @@ function App() {
   const [searchQuery, setSearchQuery] = useState('');
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('');
   const [searchHistory, setSearchHistory] = useState<string[]>(() => {
-    const saved = localStorage.getItem('osintSearchHistory');
-    return saved ? JSON.parse(saved) : [];
+    try {
+      const saved = localStorage.getItem('osintSearchHistory');
+      const parsed = saved ? JSON.parse(saved) : [];
+      return Array.isArray(parsed) ? parsed.filter(s => typeof s === 'string') : [];
+    } catch (e) {
+      console.error('Failed to parse search history', e);
+      return [];
+    }
   });
 
   const addToSearchHistory = (query: string) => {
@@ -568,6 +603,7 @@ function App() {
     const handleClickOutside = (event: MouseEvent) => {
       if (searchRef.current && !searchRef.current.contains(event.target as Node)) {
         setShowHistoryDropdown(false);
+        setHistoryIndex(-1);
       }
     };
     document.addEventListener('mousedown', handleClickOutside);
@@ -800,6 +836,7 @@ function App() {
   const [isVisualScanning, setIsVisualScanning] = useState(false);
   const [toolSearchQuery, setToolSearchQuery] = useState('');
   const [showHistoryDropdown, setShowHistoryDropdown] = useState(false);
+  const [historyIndex, setHistoryIndex] = useState(-1);
   const [savedSearches, setSavedSearches] = useState<string[]>([]);
   const [scanHistory, setScanHistory] = useState<any[]>([]);
   const [selectedToolIds, setSelectedToolIds] = useState<Set<string>>(new Set());
@@ -1049,6 +1086,12 @@ function App() {
     });
     return counts;
   }, []);
+
+  const filteredHistory = useMemo(() => {
+    if (!Array.isArray(searchHistory)) return [];
+    if (!searchQuery) return searchHistory;
+    return searchHistory.filter(s => typeof s === 'string' && s.toLowerCase().includes(searchQuery.toLowerCase()));
+  }, [searchHistory, searchQuery]);
 
   // Global Tool Search
   const globalFilteredTools = useMemo(() => {
@@ -1467,493 +1510,8 @@ function App() {
     URL.revokeObjectURL(url);
   };
 
-  const IntelligenceWindow = () => {
-    if (!showIntelligenceWindow) return null;
 
-    return (
-      <motion.div
-        initial={{ opacity: 0, x: -20, scale: 0.95 }}
-        animate={{ opacity: 1, x: 0, scale: 1 }}
-        exit={{ opacity: 0, x: -20, scale: 0.95 }}
-        className="fixed top-24 left-6 bottom-24 w-[32rem] z-[100] font-mono"
-      >
-        <div className="bg-[#050505]/95 border border-white/10 shadow-[0_0_50px_rgba(0,0,0,0.5)] backdrop-blur-2xl rounded-lg overflow-hidden flex flex-col h-full">
-          {/* Header */}
-          <div className="flex items-center justify-between p-4 border-b border-white/5 bg-gradient-to-r from-neon-lime/10 to-transparent">
-            <div className="flex items-center gap-3">
-              <Shield size={18} className="text-neon-lime" />
-              <div>
-                <h3 className="text-[11px] font-black uppercase tracking-[0.3em] text-white leading-none">Intelligence Report</h3>
-                <p className="text-[9px] text-white/40 mt-1 uppercase tracking-wider">
-                  {scanResults ? `Target: ${scanResults.target} • ID: ${scanResults.timestamp.replace(/[^A-Z0-9]/g, '').slice(-8)}` : 'No Active Target'}
-                </p>
-              </div>
-            </div>
-            <button 
-              onClick={() => setShowIntelligenceWindow(false)}
-              className="text-white/20 hover:text-white transition-colors"
-            >
-              <XCircle size={16} />
-            </button>
-          </div>
 
-          {/* Content */}
-          <div className="flex-1 overflow-y-auto p-6 space-y-10 custom-scrollbar">
-            {!scanResults ? (
-              <div className="flex flex-col items-center justify-center py-24 text-center opacity-20">
-                <Shield size={48} className="mb-4" />
-                <p className="text-[10px] uppercase tracking-widest font-bold">No Intelligence Data</p>
-                <p className="text-[8px] mt-1">Initiate a scan to generate a target dossier</p>
-              </div>
-            ) : (
-              <>
-                {isScanning && (
-                  <div className="flex items-center gap-3 p-4 bg-neon-lime/5 border border-neon-lime/20 rounded-lg animate-pulse mb-6">
-                    <Activity size={16} className="text-neon-lime animate-spin" />
-                    <span className="text-[10px] font-mono text-neon-lime uppercase tracking-[0.3em]">
-                      {isDeepScan ? 'DEEP_INTELLIGENCE_EXTRACTION_IN_PROGRESS...' : 'SCAN_SEQUENCE_ACTIVE...'}
-                    </span>
-                  </div>
-                )}
-
-                {/* Risk Score */}
-                {targetRiskScore && (
-                  <div className="grid grid-cols-1 gap-6">
-                    <div className="bg-black/40 border-2 border-neon-magenta p-6 flex flex-col items-center justify-center text-center">
-                      <span className="text-[10px] font-mono text-neon-magenta uppercase tracking-widest mb-2">VULNERABILITY_SCORE</span>
-                      <div className="text-6xl font-graffiti text-neon-magenta mb-2">{targetRiskScore.score}</div>
-                      <div className={`text-xs font-mono uppercase tracking-[0.3em] px-3 py-1 border ${
-                        targetRiskScore.level === 'Critical' ? 'bg-neon-magenta text-black border-neon-magenta' :
-                        targetRiskScore.level === 'High' ? 'text-neon-magenta border-neon-magenta' :
-                        targetRiskScore.level === 'Medium' ? 'text-neon-yellow border-neon-yellow' :
-                        'text-neon-lime border-neon-lime'
-                      }`}>
-                        {targetRiskScore.level}_RISK
-                      </div>
-                    </div>
-                    <div className="bg-black/40 border-2 border-white/10 p-6">
-                      <span className="text-[10px] font-mono text-white/40 uppercase tracking-widest mb-4 block">CRITICAL_RISK_FACTORS</span>
-                      <div className="space-y-4">
-                        {targetRiskScore.factors.map((factor, i) => (
-                          <div key={i} className="flex items-start gap-4">
-                            <div className="p-1 bg-neon-magenta/20 border border-neon-magenta/40 mt-1">
-                              <AlertTriangle size={12} className="text-neon-magenta" />
-                            </div>
-                            <p className="text-xs font-mono text-white/80 leading-relaxed uppercase">{factor}</p>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {/* AI Dossier */}
-                {targetDossier && (
-                  <div className="bg-neon-cyan/5 border-2 border-neon-cyan/30 p-6 relative overflow-hidden group rounded">
-                    <div className="flex items-center gap-3 mb-6 border-b border-neon-cyan/20 pb-4">
-                      <Brain className="text-neon-cyan" size={20} />
-                      <h3 className="text-xl font-graffiti text-neon-cyan tracking-widest uppercase">AI_TARGET_DOSSIER</h3>
-                    </div>
-                    <div className="prose prose-invert prose-sm max-w-none font-mono text-white/90 leading-relaxed dossier-content">
-                      <Markdown>{targetDossier}</Markdown>
-                    </div>
-                    <div className="mt-6 pt-4 border-t border-neon-cyan/20 flex justify-between items-center">
-                      <p className="text-[8px] font-mono text-neon-cyan/50 uppercase tracking-[0.3em]">AI_GENERATED // CONFIDENTIAL</p>
-                      <button 
-                        onClick={() => {
-                          const blob = new Blob([targetDossier], { type: 'text/markdown' });
-                          const url = URL.createObjectURL(blob);
-                          const a = document.createElement('a');
-                          a.href = url;
-                          a.download = `DOSSIER_${searchQuery.replace(/[^a-z0-9]/gi, '_').toUpperCase()}.md`;
-                          a.click();
-                        }}
-                        className="text-[9px] font-mono text-neon-cyan hover:underline uppercase tracking-widest"
-                      >
-                        DOWNLOAD_MD
-                      </button>
-                    </div>
-                  </div>
-                )}
-
-                {/* Social Footprint */}
-                {scanResults.social && Array.isArray(scanResults.social) && (
-                  <div className="space-y-8">
-                    <div className="flex items-center gap-3 border-b border-white/10 pb-2">
-                      <User size={16} className="text-neon-lime" />
-                      <h4 className="text-xs font-mono uppercase tracking-widest text-white">Social_Footprint</h4>
-                    </div>
-                    <div className="space-y-8">
-                      {['Social', 'Chat', 'Gaming', 'Dating', 'NSFW', 'Professional', 'Creative', 'Tech', 'Other'].map(category => {
-                        const categorySites = scanResults.social.filter((s: any) => s.category === category);
-                        if (categorySites.length === 0) return null;
-                        
-                        const foundCount = categorySites.filter((s: any) => (s.status === 'Found' || s.status === 'Possible but Deleted') && !falsePositives.has(s.name)).length;
-                        
-                        return (
-                          <div key={category} className="space-y-3">
-                            <div className="flex items-center justify-between">
-                              <h5 className="text-[9px] font-mono uppercase text-neon-cyan flex items-center gap-2">
-                                <span className="w-1.5 h-1.5 bg-neon-cyan rounded-full animate-pulse" />
-                                {category}_SECTOR
-                              </h5>
-                              <span className="text-[8px] font-mono opacity-50">
-                                {foundCount} / {categorySites.length} IDENTIFIED
-                              </span>
-                            </div>
-                            
-                            <div className="grid grid-cols-1 gap-2">
-                              {foundCount === 0 ? (
-                                <div className="py-4 border border-dashed border-white/10 rounded flex flex-col items-center justify-center bg-black/20">
-                                  <span className="text-[8px] font-mono text-white/20 uppercase tracking-widest">No_Active_Profiles</span>
-                                </div>
-                              ) : categorySites.map((site: any) => {
-                                const isFalsePositive = falsePositives.has(site.name);
-                                if ((site.status === 'Found' || site.status === 'Possible but Deleted') && !isFalsePositive) {
-                                  const isPossible = site.status === 'Possible but Deleted';
-                                  return (
-                                    <div 
-                                      key={site.name}
-                                      className={`p-2 border flex items-center justify-between transition-all ${isPossible ? 'border-neon-magenta/30 bg-neon-magenta/5' : 'border-neon-lime/30 bg-neon-lime/5'}`}
-                                    >
-                                      <div className="flex items-center gap-2">
-                                        {site.avatar && (
-                                          <img 
-                                            src={site.avatar} 
-                                            alt={site.name} 
-                                            className="w-4 h-4 rounded-full border border-white/20"
-                                            referrerPolicy="no-referrer"
-                                          />
-                                        )}
-                                        <span className="text-[9px] uppercase tracking-widest truncate max-w-[120px]">{site.name}</span>
-                                      </div>
-                                      <div className="flex items-center gap-2">
-                                        <span className={`text-[8px] font-bold ${isPossible ? 'text-neon-magenta' : 'text-neon-lime'}`}>
-                                          {isPossible ? 'POSSIBLE' : 'FOUND'}
-                                        </span>
-                                        <button 
-                                          onClick={() => handleToolSearch(site.name, site.url)}
-                                          className="p-1 hover:bg-white/10 rounded transition-colors"
-                                        >
-                                          <ExternalLink size={10} className="text-white/40" />
-                                        </button>
-                                      </div>
-                                    </div>
-                                  );
-                                }
-                                return null;
-                              })}
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                )}
-
-                {/* Breach Intelligence */}
-                <div className="space-y-4">
-                  <div className="flex items-center gap-3 border-b border-white/10 pb-2">
-                    <Zap size={16} className="text-neon-magenta" />
-                    <h4 className="text-xs font-mono uppercase tracking-widest text-white">Breach_Intelligence</h4>
-                  </div>
-                  <div className="grid grid-cols-1 gap-3">
-                    <div className="p-3 bg-red-500/5 border border-red-500/20 rounded">
-                      <h5 className="text-[9px] text-red-400 font-bold mb-1 uppercase">Potential_Leaks</h5>
-                      <button 
-                        onClick={() => handleBreachQuery('HIBP', `https://haveibeenpwned.com/account/${scanResults.target}`)}
-                        className="w-full py-1 bg-red-500/20 text-red-400 text-[8px] border border-red-500/30 hover:bg-red-500/40 transition-all uppercase tracking-widest"
-                      >
-                        RUN_HIBP_QUERY
-                      </button>
-                    </div>
-                    <div className="p-3 bg-neon-cyan/5 border border-neon-cyan/20 rounded">
-                      <h5 className="text-[9px] text-neon-cyan font-bold mb-1 uppercase">Identity_Verification</h5>
-                      <button 
-                        onClick={() => handleBreachQuery('IntelX', `https://intelx.io/?s=${scanResults.target}`)}
-                        className="w-full py-1 bg-neon-cyan/20 text-neon-cyan text-[8px] border border-neon-cyan/30 hover:bg-neon-cyan/40 transition-all uppercase tracking-widest"
-                      >
-                        QUERY_INTELX_DB
-                      </button>
-                    </div>
-                  </div>
-                </div>
-
-                {/* WHOIS */}
-                {scanResults.whois && !scanResults.whois.error && (
-                  <div className="space-y-4">
-                    <div className="flex items-center gap-3 border-b border-white/10 pb-2">
-                      <Globe size={16} className="text-neon-cyan" />
-                      <h4 className="text-xs font-mono uppercase tracking-widest text-white">Whois_Data</h4>
-                    </div>
-                    <div className="grid grid-cols-1 gap-2 bg-white/5 p-4 border border-white/10 rounded">
-                      {Object.entries(scanResults.whois).map(([key, val]: [string, any]) => (
-                        val && typeof val === 'string' && (
-                          <div key={key} className="flex justify-between items-center gap-4 text-[9px] font-mono">
-                            <span className="opacity-40 uppercase">{key}</span>
-                            <span className="text-neon-cyan truncate max-w-[200px]">{val}</span>
-                          </div>
-                        )
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </>
-            )}
-          </div>
-
-          {/* Footer */}
-          <div className="p-4 border-t border-white/5 bg-black/50 grid grid-cols-2 gap-3">
-            <button 
-              onClick={exportCurrentScanResults}
-              disabled={!scanResults}
-              className="flex items-center justify-center gap-2 py-2 bg-neon-lime/10 border border-neon-lime/30 rounded text-[9px] text-neon-lime uppercase font-bold tracking-widest hover:bg-neon-lime hover:text-black transition-all disabled:opacity-20 disabled:cursor-not-allowed"
-            >
-              <Download size={12} />
-              Export_JSON
-            </button>
-            <button 
-              onClick={downloadScanLog}
-              disabled={!scanResults}
-              className="flex items-center justify-center gap-2 py-2 bg-white/5 border border-white/10 rounded text-[9px] text-white/60 uppercase font-bold tracking-widest hover:bg-white/10 hover:text-white transition-all disabled:opacity-20 disabled:cursor-not-allowed"
-            >
-              <Download size={12} />
-              Raw_Log
-            </button>
-          </div>
-        </div>
-      </motion.div>
-    );
-  };
-
-  const StatusWindow = () => {
-    if (!showStatusWindow) return null;
-
-    const activeCount = runningTools.filter(t => t.status === 'running').length;
-    const completedCount = runningTools.filter(t => t.status === 'completed').length;
-    const failedCount = runningTools.filter(t => t.status === 'failed').length;
-
-    return (
-      <motion.div
-        initial={{ opacity: 0, y: 20, scale: 0.95 }}
-        animate={{ opacity: 1, y: 0, scale: 1 }}
-        exit={{ opacity: 0, y: 20, scale: 0.95 }}
-        className="fixed bottom-24 right-6 w-96 z-[100] font-mono"
-      >
-        <div className="bg-[#050505]/95 border border-white/10 shadow-[0_0_50px_rgba(0,0,0,0.5)] backdrop-blur-2xl rounded-lg overflow-hidden flex flex-col max-h-[80vh]">
-          {/* Header */}
-          <div className="flex items-center justify-between p-4 border-b border-white/5 bg-gradient-to-r from-neon-cyan/10 to-transparent">
-            <div className="flex items-center gap-3">
-              <div className="relative">
-                <Activity size={18} className="text-neon-cyan" />
-                {activeCount > 0 && (
-                  <span className="absolute -top-1 -right-1 w-2 h-2 bg-neon-cyan rounded-full" />
-                )}
-              </div>
-              <div>
-                <h3 className="text-[11px] font-black uppercase tracking-[0.3em] text-white leading-none">Live Ops Monitor</h3>
-                <p className="text-[9px] text-white/40 mt-1 uppercase tracking-wider">
-                  {activeCount} Active • {completedCount} Done • {failedCount} Failed
-                </p>
-              </div>
-            </div>
-            <div className="flex items-center gap-3">
-              <button 
-                onClick={() => setRunningTools([])}
-                className="group flex items-center gap-2 px-2 py-1 rounded border border-white/5 hover:border-neon-magenta/50 transition-all"
-                title="Clear all logs"
-              >
-                <Trash2 size={10} className="text-white/40 group-hover:text-neon-magenta" />
-                <span className="text-[8px] text-white/40 group-hover:text-neon-magenta uppercase font-bold">Wipe</span>
-              </button>
-              <button 
-                onClick={() => setShowStatusWindow(false)}
-                className="text-white/20 hover:text-white transition-colors"
-              >
-                <XCircle size={16} />
-              </button>
-            </div>
-          </div>
-
-          {/* Global Progress */}
-          {activeCount > 0 && (
-            <div className="h-0.5 w-full bg-white/5 overflow-hidden">
-              <div className="h-full bg-neon-cyan shadow-[0_0_10px_#00f3ff]" style={{ width: '100%', animation: 'none' }} />
-            </div>
-          )}
-          
-          {/* Tool List */}
-          <div className="flex-1 overflow-y-auto p-4 space-y-3 custom-scrollbar">
-            {runningTools.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-12 text-center opacity-20">
-                <Activity size={32} className="mb-4" />
-                <p className="text-[10px] uppercase tracking-widest font-bold">No active processes</p>
-                <p className="text-[8px] mt-1">Start a scan to monitor live operations</p>
-              </div>
-            ) : (
-              <AnimatePresence mode="popLayout" initial={false}>
-                {runningTools.map((tool) => (
-                  <motion.div 
-                    key={tool.id}
-                    initial={{ opacity: 0, y: 10 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, scale: 0.95 }}
-                    className={`group relative rounded-md border transition-all duration-200 ${
-                      expandedToolId === tool.id 
-                        ? 'bg-white/5 border-white/20' 
-                        : 'bg-white/[0.02] border-white/5 hover:border-white/10'
-                    }`}
-                  >
-                    <div 
-                      className="p-3 cursor-pointer"
-                      onClick={() => setExpandedToolId(expandedToolId === tool.id ? null : tool.id)}
-                    >
-                      <div className="flex items-center justify-between mb-2">
-                        <div className="flex items-center gap-2">
-                          <span className={`w-1.5 h-1.5 rounded-full ${
-                            tool.status === 'completed' ? 'bg-neon-lime shadow-[0_0_5px_#39ff14]' : 
-                            tool.status === 'failed' ? 'bg-red-500 shadow-[0_0_5px_#ef4444]' : 
-                            'bg-neon-cyan shadow-[0_0_5px_#00f3ff]'
-                          }`} />
-                          <span className="text-[10px] text-white/90 font-bold uppercase tracking-widest">{tool.name}</span>
-                        </div>
-                        <div className="flex items-center gap-3">
-                          <span className="text-[9px] text-white/30 font-mono">
-                            {Math.floor((Date.now() - tool.startTime) / 1000)}s
-                          </span>
-                          <ChevronDown 
-                            size={12} 
-                            className={`text-white/20 transition-transform duration-300 ${expandedToolId === tool.id ? 'rotate-180' : ''}`} 
-                          />
-                        </div>
-                      </div>
-
-                      {/* Mini Progress Bar */}
-                      <div className="h-1 w-full bg-white/5 rounded-full overflow-hidden">
-                        <motion.div 
-                          className={`h-full transition-all duration-500 ${
-                            tool.status === 'completed' ? 'bg-neon-lime' : 
-                            tool.status === 'failed' ? 'bg-red-500' : 
-                            'bg-neon-cyan'
-                          }`}
-                          initial={{ width: 0 }}
-                          animate={{ width: `${tool.status === 'completed' ? 100 : tool.status === 'failed' ? 100 : Math.max(10, tool.progress)}%` }}
-                        />
-                      </div>
-
-                      {/* Status Text */}
-                      <div className="flex items-center justify-between mt-2">
-                        <span className="text-[8px] text-white/40 uppercase tracking-tighter">
-                          {tool.category} • {tool.type}
-                        </span>
-                        <span className={`text-[8px] font-black uppercase ${
-                          tool.status === 'completed' ? 'text-neon-lime' : 
-                          tool.status === 'failed' ? 'text-red-500' : 
-                          'text-neon-cyan'
-                        }`}>
-                          {tool.status === 'running' ? `Processing_${Math.floor(tool.progress)}%` : tool.status}
-                        </span>
-                      </div>
-                    </div>
-
-                    {/* Expanded Details */}
-                    <AnimatePresence>
-                      {expandedToolId === tool.id && (
-                        <motion.div
-                          initial={{ height: 0, opacity: 0 }}
-                          animate={{ height: 'auto', opacity: 1 }}
-                          exit={{ height: 0, opacity: 0 }}
-                          className="overflow-hidden border-t border-white/5 bg-black/40"
-                        >
-                          <div className="p-3 space-y-3 max-h-64 overflow-y-auto custom-scrollbar">
-                            {/* Logs */}
-                            <div className="space-y-1">
-                              <p className="text-[8px] text-white/20 uppercase font-bold tracking-widest mb-2">Execution_Logs</p>
-                              {tool.logs?.map((log: string, i: number) => (
-                                <div key={i} className="flex gap-2 text-[9px] font-mono">
-                                  <span className="text-white/10">[{i}]</span>
-                                  <span className="text-white/60">{log}</span>
-                                </div>
-                              ))}
-                              {tool.status === 'running' && (
-                                <div className="flex gap-2 text-[9px] font-mono animate-pulse">
-                                  <span className="text-white/10">[*]</span>
-                                  <span className="text-neon-cyan">Awaiting server response...</span>
-                                </div>
-                              )}
-                            </div>
-
-                            {/* Site-by-site results for social scans */}
-                            {tool.siteResults && tool.siteResults.length > 0 && (
-                              <div className="mt-4 pt-4 border-t border-white/5 space-y-1">
-                                <p className="text-[8px] text-neon-cyan uppercase font-bold tracking-widest mb-2">Site_By_Site_Analysis</p>
-                                <div className="grid grid-cols-1 gap-1">
-                                  {tool.siteResults.map((site: any, i: number) => (
-                                    <div key={i} className="flex items-center justify-between gap-2 py-1 border-b border-white/[0.02] text-[8px] font-mono">
-                                      <span className="text-white/40 truncate">{site.name}</span>
-                                      <span className={`shrink-0 font-bold ${
-                                        site.status === 'Found' ? 'text-neon-lime' : 
-                                        site.status === 'Possible but Deleted' ? 'text-neon-magenta' : 
-                                        'text-white/10'
-                                      }`}>
-                                        {site.status === 'Found' ? 'HIT' : site.status === 'Possible but Deleted' ? 'POSSIBLE' : 'MISS'}
-                                      </span>
-                                    </div>
-                                  ))}
-                                </div>
-                              </div>
-                            )}
-
-                            {/* Results Preview */}
-                            {tool.results && (
-                              <div className="p-2 bg-white/[0.03] rounded border border-white/5">
-                                <p className="text-[8px] text-white/20 uppercase font-bold tracking-widest mb-1">Result_Summary</p>
-                                <p className="text-[10px] text-neon-lime font-mono leading-relaxed">{tool.results}</p>
-                              </div>
-                            )}
-                          </div>
-                        </motion.div>
-                      )}
-                    </AnimatePresence>
-                  </motion.div>
-                ))}
-              </AnimatePresence>
-            )}
-          </div>
-
-          {/* Footer */}
-          <div className="p-3 border-t border-white/5 bg-black/50 flex flex-col gap-3">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <div className="w-1 h-1 bg-neon-lime rounded-full animate-pulse" />
-                <span className="text-[8px] text-white/30 uppercase tracking-widest">System_Online</span>
-              </div>
-              <span className="text-[8px] text-white/20 font-mono">v2.4.0-STABLE</span>
-            </div>
-            
-            <div className="grid grid-cols-2 gap-2">
-              <button 
-                onClick={exportLogsAsJSON}
-                disabled={runningTools.length === 0}
-                className="flex items-center justify-center gap-2 py-2 bg-white/5 border border-white/10 rounded text-[8px] text-white/60 uppercase font-bold tracking-widest hover:bg-white/10 hover:text-white transition-all disabled:opacity-30 disabled:cursor-not-allowed"
-              >
-                <Download size={10} />
-                Export_JSON
-              </button>
-              <button 
-                onClick={exportLogsAsText}
-                disabled={runningTools.length === 0}
-                className="flex items-center justify-center gap-2 py-2 bg-white/5 border border-white/10 rounded text-[8px] text-white/60 uppercase font-bold tracking-widest hover:bg-white/10 hover:text-white transition-all disabled:opacity-30 disabled:cursor-not-allowed"
-              >
-                <FileText size={10} />
-                Download_Log
-              </button>
-            </div>
-          </div>
-        </div>
-      </motion.div>
-    );
-  };
 
   const handleHistoricalScan = async () => {
     if (!searchQuery) return;
@@ -2449,7 +2007,8 @@ function App() {
   };
 
   return (
-    <div className="min-h-screen bg-bg-primary text-text-primary font-sans selection:bg-neon-magenta selection:text-white transition-colors duration-300 brick-overlay">
+    <ErrorBoundary>
+      <div className="min-h-screen bg-bg-primary text-text-primary font-sans selection:bg-neon-magenta selection:text-white transition-colors duration-300 brick-overlay">
       {/* Decorative Splashes */}
       <div className="fixed top-[-10%] left-[-10%] w-[40%] h-[40%] bg-neon-cyan/10 blur-[120px] rounded-full pointer-events-none" />
       <div className="fixed bottom-[-10%] right-[-10%] w-[40%] h-[40%] bg-neon-magenta/10 blur-[120px] rounded-full pointer-events-none" />
@@ -2566,6 +2125,7 @@ function App() {
                   value={searchQuery}
                   onChange={(e) => {
                     setSearchQuery(e.target.value);
+                    setHistoryIndex(-1);
                     if (e.target.value.length > 2 && !e.target.value.includes('.') && !e.target.value.includes('@')) {
                       setShowQuickResults(false); // Reset on change
                     } else {
@@ -2574,13 +2134,46 @@ function App() {
                   }}
                   onFocus={() => {
                     setShowHistoryDropdown(true);
+                    setHistoryIndex(-1);
                   }}
-                  onKeyDown={(e) => e.key === 'Enter' && handleScan()}
+                  onKeyDown={(e) => {
+                    if (e.key === 'ArrowDown') {
+                      e.preventDefault();
+                      if (!showHistoryDropdown) {
+                        setShowHistoryDropdown(true);
+                        setHistoryIndex(0);
+                      } else {
+                        setHistoryIndex(prev => (prev < filteredHistory.length - 1 ? prev + 1 : prev));
+                      }
+                    } else if (e.key === 'ArrowUp') {
+                      e.preventDefault();
+                      setHistoryIndex(prev => (prev > 0 ? prev - 1 : -1));
+                    } else if (e.key === 'Tab') {
+                      if (showHistoryDropdown && filteredHistory.length > 0) {
+                        e.preventDefault();
+                        const index = historyIndex >= 0 ? historyIndex : 0;
+                        setSearchQuery(filteredHistory[index]);
+                        setHistoryIndex(-1);
+                        setShowHistoryDropdown(false);
+                      }
+                    } else if (e.key === 'Enter') {
+                      if (historyIndex >= 0 && filteredHistory[historyIndex]) {
+                        setSearchQuery(filteredHistory[historyIndex]);
+                        setHistoryIndex(-1);
+                        setShowHistoryDropdown(false);
+                      } else {
+                        handleScan();
+                      }
+                    } else if (e.key === 'Escape') {
+                      setShowHistoryDropdown(false);
+                      setHistoryIndex(-1);
+                    }
+                  }}
                 />
                 
                 {/* Search History Dropdown */}
                 <AnimatePresence>
-                  {showHistoryDropdown && searchHistory.length > 0 && (
+                  {showHistoryDropdown && filteredHistory.length > 0 && (
                     <motion.div 
                       initial={{ opacity: 0, y: 10 }}
                       animate={{ opacity: 1, y: 0 }}
@@ -2600,17 +2193,18 @@ function App() {
                           CLEAR_HISTORY
                         </button>
                       </div>
-                      {searchHistory.map((s, i) => (
+                      {filteredHistory.map((s, i) => (
                         <button 
                           key={i}
                           onClick={(e) => {
                             e.stopPropagation();
                             setSearchQuery(s);
                             setShowHistoryDropdown(false);
+                            setHistoryIndex(-1);
                           }}
-                          className="w-full text-left px-4 py-3 hover:bg-white/5 font-mono text-xs uppercase tracking-widest border-b border-border-primary/5 last:border-0 flex items-center gap-3 group"
+                          className={`w-full text-left px-4 py-3 font-mono text-xs uppercase tracking-widest border-b border-border-primary/5 last:border-0 flex items-center gap-3 group transition-colors ${historyIndex === i ? 'bg-white/10 text-neon-cyan' : 'hover:bg-white/5'}`}
                         >
-                          <History size={12} className="text-text-secondary group-hover:text-neon-cyan" />
+                          <History size={12} className={`text-text-secondary group-hover:text-neon-cyan ${historyIndex === i ? 'text-neon-cyan' : ''}`} />
                           <span className="truncate">{s}</span>
                         </button>
                       ))}
@@ -4476,7 +4070,7 @@ function App() {
                               const url = URL.createObjectURL(blob);
                               const a = document.createElement('a');
                               a.href = url;
-                              a.download = `DOSSIER_${scanResults.target.replace(/[^a-z0-9]/gi, '_').toUpperCase()}.md`;
+                              a.download = `DOSSIER_${(scanResults?.target || 'TARGET').replace(/[^a-z0-9]/gi, '_').toUpperCase()}.md`;
                               a.click();
                             }}
                             className="text-[10px] font-mono text-neon-cyan hover:underline uppercase tracking-widest"
@@ -5143,11 +4737,565 @@ function App() {
         </button>
       </div>
 
-      <StatusWindow />
-      <IntelligenceWindow />
-    </div>
+      <StatusWindow 
+        isOpen={showStatusWindow} 
+        onClose={() => setShowStatusWindow(false)}
+        runningTools={runningTools}
+        onClearLogs={() => setRunningTools([])}
+        expandedToolId={expandedToolId}
+        setExpandedToolId={setExpandedToolId}
+        onExportJSON={exportLogsAsJSON}
+        onDownloadLog={exportLogsAsText}
+      />
+      <IntelligenceWindow 
+        isOpen={showIntelligenceWindow}
+        onClose={() => setShowIntelligenceWindow(false)}
+        scanResults={scanResults}
+        isScanning={isScanning}
+        isDeepScan={isDeepScan}
+        targetRiskScore={targetRiskScore}
+        targetDossier={targetDossier}
+        falsePositives={falsePositives}
+        onToolSearch={handleToolSearch}
+        onBreachQuery={handleBreachQuery}
+        onExportJSON={exportCurrentScanResults}
+        onDownloadLog={downloadScanLog}
+        searchQuery={searchQuery}
+        aiSuggestions={aiSuggestions}
+        aiActions={aiActions}
+      />
+      </div>
+    </ErrorBoundary>
   );
 }
+
+
+const IntelligenceWindow = React.memo(({ 
+  isOpen, 
+  onClose, 
+  scanResults, 
+  isScanning, 
+  isDeepScan, 
+  targetRiskScore, 
+  targetDossier, 
+  falsePositives, 
+  onToolSearch, 
+  onBreachQuery, 
+  onExportJSON, 
+  onDownloadLog,
+  searchQuery,
+  aiSuggestions,
+  aiActions
+}: IntelligenceWindowProps) => {
+  if (!isOpen) return null;
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, x: -20, scale: 0.95 }}
+      animate={{ opacity: 1, x: 0, scale: 1 }}
+      exit={{ opacity: 0, x: -20, scale: 0.95 }}
+      className="fixed top-24 left-6 bottom-24 w-[32rem] z-[100] font-mono"
+    >
+      <div className="bg-[#050505]/95 border border-white/10 shadow-[0_0_50px_rgba(0,0,0,0.5)] backdrop-blur-2xl rounded-lg overflow-hidden flex flex-col h-full">
+        {/* Header */}
+        <div className="flex items-center justify-between p-4 border-b border-white/5 bg-gradient-to-r from-neon-lime/10 to-transparent">
+          <div className="flex items-center gap-3">
+            <Shield size={18} className="text-neon-lime" />
+            <div>
+              <h3 className="text-[11px] font-black uppercase tracking-[0.3em] text-white leading-none">Intelligence Report</h3>
+              <p className="text-[9px] text-white/40 mt-1 uppercase tracking-wider">
+                {scanResults ? `Target: ${scanResults.target} • ID: ${scanResults.timestamp.replace(/[^A-Z0-9]/g, '').slice(-8)}` : 'No Active Target'}
+              </p>
+            </div>
+          </div>
+          <button 
+            onClick={onClose}
+            className="text-white/20 hover:text-white transition-colors"
+          >
+            <XCircle size={16} />
+          </button>
+        </div>
+
+        {/* Content */}
+        <div className="flex-1 overflow-y-auto p-6 space-y-10 custom-scrollbar">
+          {!scanResults ? (
+            <div className="flex flex-col items-center justify-center py-24 text-center opacity-20">
+              <Shield size={48} className="mb-4" />
+              <p className="text-[10px] uppercase tracking-widest font-bold">No Intelligence Data</p>
+              <p className="text-[8px] mt-1">Initiate a scan to generate a target dossier</p>
+            </div>
+          ) : (
+            <>
+              {isScanning && (
+                <div className="flex items-center gap-3 p-4 bg-neon-lime/5 border border-neon-lime/20 rounded-lg animate-pulse mb-6">
+                  <Activity size={16} className="text-neon-lime animate-spin" />
+                  <span className="text-[10px] font-mono text-neon-lime uppercase tracking-[0.3em]">
+                    {isDeepScan ? 'DEEP_INTELLIGENCE_EXTRACTION_IN_PROGRESS...' : 'SCAN_SEQUENCE_ACTIVE...'}
+                  </span>
+                </div>
+              )}
+
+              {/* Risk Score */}
+              {targetRiskScore && (
+                <div className="grid grid-cols-1 gap-6">
+                  <div className="bg-black/40 border-2 border-neon-magenta p-6 flex flex-col items-center justify-center text-center">
+                    <span className="text-[10px] font-mono text-neon-magenta uppercase tracking-widest mb-2">VULNERABILITY_SCORE</span>
+                    <div className="text-6xl font-graffiti text-neon-magenta mb-2">{targetRiskScore.score}</div>
+                    <div className={`text-xs font-mono uppercase tracking-[0.3em] px-3 py-1 border ${
+                      targetRiskScore.level === 'Critical' ? 'bg-neon-magenta text-black border-neon-magenta' :
+                      targetRiskScore.level === 'High' ? 'text-neon-magenta border-neon-magenta' :
+                      targetRiskScore.level === 'Medium' ? 'text-neon-yellow border-neon-yellow' :
+                      'text-neon-lime border-neon-lime'
+                    }`}>
+                      {targetRiskScore.level}_RISK
+                    </div>
+                  </div>
+                  <div className="bg-black/40 border-2 border-white/10 p-6">
+                    <span className="text-[10px] font-mono text-white/40 uppercase tracking-widest mb-4 block">CRITICAL_RISK_FACTORS</span>
+                    <div className="space-y-4">
+                      {targetRiskScore.factors.map((factor, i) => (
+                        <div key={i} className="flex items-start gap-4">
+                          <div className="p-1 bg-neon-magenta/20 border border-neon-magenta/40 mt-1">
+                            <AlertTriangle size={12} className="text-neon-magenta" />
+                          </div>
+                          <p className="text-xs font-mono text-white/80 leading-relaxed uppercase">{factor}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* AI Dossier */}
+              {targetDossier && (
+                <div className="bg-neon-cyan/5 border-2 border-neon-cyan/30 p-6 relative overflow-hidden group rounded">
+                  <div className="flex items-center gap-3 mb-6 border-b border-neon-cyan/20 pb-4">
+                    <Brain className="text-neon-cyan" size={20} />
+                    <h3 className="text-xl font-graffiti text-neon-cyan tracking-widest uppercase">AI_TARGET_DOSSIER</h3>
+                  </div>
+                  <div className="prose prose-invert prose-sm max-w-none font-mono text-white/90 leading-relaxed dossier-content">
+                    <Markdown>{targetDossier}</Markdown>
+                  </div>
+                  <div className="mt-6 pt-4 border-t border-neon-cyan/20 flex justify-between items-center">
+                    <p className="text-[8px] font-mono text-neon-cyan/50 uppercase tracking-[0.3em]">AI_GENERATED // CONFIDENTIAL</p>
+                    <button 
+                      onClick={() => {
+                        const blob = new Blob([targetDossier], { type: 'text/markdown' });
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = url;
+                        a.download = `DOSSIER_${searchQuery.replace(/[^a-z0-9]/gi, '_').toUpperCase()}.md`;
+                        a.click();
+                      }}
+                      className="text-[9px] font-mono text-neon-cyan hover:underline uppercase tracking-widest"
+                    >
+                      DOWNLOAD_MD
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* AI Suggestions & Actions */}
+              {(aiSuggestions.length > 0 || aiActions.length > 0) && (
+                <div className="space-y-6 pt-6 border-t border-white/10">
+                  <div className="flex items-center gap-3">
+                    <Sparkles className="text-neon-yellow" size={16} />
+                    <h4 className="text-xs font-mono uppercase tracking-widest text-white">AI_Recommendations</h4>
+                  </div>
+
+                  <div className="grid grid-cols-1 gap-3">
+                    {aiSuggestions.map((suggestion, i) => (
+                      <div key={i} className="bg-black/40 border border-neon-yellow/30 p-4 rounded relative group hover:border-neon-yellow transition-all">
+                        <div className="flex items-start justify-between mb-2">
+                          <h4 className="text-[10px] font-mono text-neon-yellow uppercase tracking-widest">{suggestion.name}</h4>
+                          {suggestion.directLink && (
+                            <a 
+                              href={suggestion.directLink} 
+                              target="_blank" 
+                              rel="noopener noreferrer"
+                              className="p-1 bg-neon-yellow/10 border border-neon-yellow/20 text-neon-yellow hover:bg-neon-yellow hover:text-black transition-all rounded"
+                            >
+                              <ExternalLink size={10} />
+                            </a>
+                          )}
+                        </div>
+                        <p className="text-[9px] font-mono text-white/60 leading-relaxed uppercase">
+                          <span className="text-neon-yellow/40 mr-2">REASON:</span>
+                          {suggestion.reason}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+
+                  {aiActions.length > 0 && (
+                    <div className="bg-neon-magenta/5 border border-neon-magenta/30 p-4 rounded">
+                      <div className="flex items-center gap-3 mb-3">
+                        <Terminal size={12} className="text-neon-magenta" />
+                        <h4 className="text-[9px] font-mono text-neon-magenta uppercase tracking-[0.3em]">AUTONOMOUS_LOG</h4>
+                      </div>
+                      <div className="space-y-1.5">
+                        {aiActions.map((action, i) => (
+                          <div key={i} className="flex items-center gap-2 text-[8px] font-mono text-white/40 uppercase">
+                            <span className="text-neon-magenta opacity-50">[{new Date().toLocaleTimeString()}]</span>
+                            <span className="text-white/80">{action}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Social Footprint */}
+              {scanResults.social && Array.isArray(scanResults.social) && (
+                <div className="space-y-8">
+                  <div className="flex items-center gap-3 border-b border-white/10 pb-2">
+                    <User size={16} className="text-neon-lime" />
+                    <h4 className="text-xs font-mono uppercase tracking-widest text-white">Social_Footprint</h4>
+                  </div>
+                  <div className="space-y-8">
+                    {['Social', 'Chat', 'Gaming', 'Dating', 'NSFW', 'Professional', 'Creative', 'Tech', 'Other'].map(category => {
+                      const categorySites = scanResults.social.filter((s: any) => s.category === category);
+                      if (categorySites.length === 0) return null;
+                      
+                      const foundCount = categorySites.filter((s: any) => (s.status === 'Found' || s.status === 'Possible but Deleted') && !falsePositives.has(s.name)).length;
+                      
+                      return (
+                        <div key={category} className="space-y-3">
+                          <div className="flex items-center justify-between">
+                            <h5 className="text-[9px] font-mono uppercase text-neon-cyan flex items-center gap-2">
+                              <span className="w-1.5 h-1.5 bg-neon-cyan rounded-full animate-pulse" />
+                              {category}_SECTOR
+                            </h5>
+                            <span className="text-[8px] font-mono opacity-50">
+                              {foundCount} / {categorySites.length} IDENTIFIED
+                            </span>
+                          </div>
+                          
+                          <div className="grid grid-cols-1 gap-2">
+                            {foundCount === 0 ? (
+                              <div className="py-4 border border-dashed border-white/10 rounded flex flex-col items-center justify-center bg-black/20">
+                                <span className="text-[8px] font-mono text-white/20 uppercase tracking-widest">No_Active_Profiles</span>
+                              </div>
+                            ) : categorySites.map((site: any) => {
+                              const isFalsePositive = falsePositives.has(site.name);
+                              if ((site.status === 'Found' || site.status === 'Possible but Deleted') && !isFalsePositive) {
+                                const isPossible = site.status === 'Possible but Deleted';
+                                return (
+                                  <div 
+                                    key={site.name}
+                                    className={`p-2 border flex items-center justify-between transition-all ${isPossible ? 'border-neon-magenta/30 bg-neon-magenta/5' : 'border-neon-lime/30 bg-neon-lime/5'}`}
+                                  >
+                                    <div className="flex items-center gap-2">
+                                      {site.avatar && (
+                                        <img 
+                                          src={site.avatar} 
+                                          alt={site.name} 
+                                          className="w-4 h-4 rounded-full border border-white/20"
+                                          referrerPolicy="no-referrer"
+                                        />
+                                      )}
+                                      <span className="text-[9px] uppercase tracking-widest truncate max-w-[120px]">{site.name}</span>
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                      <span className={`text-[8px] font-bold ${isPossible ? 'text-neon-magenta' : 'text-neon-lime'}`}>
+                                        {isPossible ? 'POSSIBLE' : 'FOUND'}
+                                      </span>
+                                      <button 
+                                        onClick={() => onToolSearch(site.name, site.url)}
+                                        className="p-1 hover:bg-white/10 rounded transition-colors"
+                                      >
+                                        <ExternalLink size={10} className="text-white/40" />
+                                      </button>
+                                    </div>
+                                  </div>
+                                );
+                              }
+                              return null;
+                            })}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Breach Intelligence */}
+              <div className="space-y-4">
+                <div className="flex items-center gap-3 border-b border-white/10 pb-2">
+                  <Zap size={16} className="text-neon-magenta" />
+                  <h4 className="text-xs font-mono uppercase tracking-widest text-white">Breach_Intelligence</h4>
+                </div>
+                <div className="grid grid-cols-1 gap-3">
+                  <div className="p-3 bg-red-500/5 border border-red-500/20 rounded">
+                    <h5 className="text-[9px] text-red-400 font-bold mb-1 uppercase">Potential_Leaks</h5>
+                    <button 
+                      onClick={() => onBreachQuery('HIBP', `https://haveibeenpwned.com/account/${scanResults.target}`)}
+                      className="w-full py-1 bg-red-500/20 text-red-400 text-[8px] border border-red-500/30 hover:bg-red-500/40 transition-all uppercase tracking-widest"
+                    >
+                      RUN_HIBP_QUERY
+                    </button>
+                  </div>
+                  <div className="p-3 bg-neon-cyan/5 border border-neon-cyan/20 rounded">
+                    <h5 className="text-[9px] text-neon-cyan font-bold mb-1 uppercase">Identity_Verification</h5>
+                    <button 
+                      onClick={() => onBreachQuery('IntelX', `https://intelx.io/?s=${scanResults.target}`)}
+                      className="w-full py-1 bg-neon-cyan/20 text-neon-cyan text-[8px] border border-neon-cyan/30 hover:bg-neon-cyan/40 transition-all uppercase tracking-widest"
+                    >
+                      QUERY_INTELX_DB
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* WHOIS */}
+              {scanResults.whois && !scanResults.whois.error && (
+                <div className="space-y-4">
+                  <div className="flex items-center gap-3 border-b border-white/10 pb-2">
+                    <Globe size={16} className="text-neon-cyan" />
+                    <h4 className="text-xs font-mono uppercase tracking-widest text-white">Whois_Data</h4>
+                  </div>
+                  <div className="grid grid-cols-1 gap-2 bg-white/5 p-4 border border-white/10 rounded">
+                    {Object.entries(scanResults.whois).map(([key, val]: [string, any]) => (
+                      val && typeof val === 'string' && (
+                        <div key={key} className="flex justify-between items-center gap-4 text-[9px] font-mono">
+                          <span className="opacity-40 uppercase">{key}</span>
+                          <span className="text-neon-cyan truncate max-w-[200px]">{val}</span>
+                        </div>
+                      )
+                    ))}
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="p-4 border-t border-white/5 bg-black/50 grid grid-cols-2 gap-3">
+          <button 
+            onClick={onExportJSON}
+            disabled={!scanResults}
+            className="flex items-center justify-center gap-2 py-2 bg-neon-lime/10 border border-neon-lime/30 rounded text-[9px] text-neon-lime uppercase font-bold tracking-widest hover:bg-neon-lime hover:text-black transition-all disabled:opacity-20 disabled:cursor-not-allowed"
+          >
+            <Download size={12} />
+            Export_JSON
+          </button>
+          <button 
+            onClick={onDownloadLog}
+            disabled={!scanResults}
+            className="flex items-center justify-center gap-2 py-2 bg-white/5 border border-white/10 rounded text-[9px] text-white/60 uppercase font-bold tracking-widest hover:bg-white/10 hover:text-white transition-all disabled:opacity-20 disabled:cursor-not-allowed"
+          >
+            <Download size={12} />
+            Raw_Log
+          </button>
+        </div>
+      </div>
+    </motion.div>
+  );
+});
+
+const StatusWindow = React.memo(({ 
+  isOpen, 
+  onClose, 
+  runningTools, 
+  onClearLogs, 
+  expandedToolId, 
+  setExpandedToolId,
+  onExportJSON,
+  onDownloadLog
+}: StatusWindowProps) => {
+  if (!isOpen) return null;
+
+  const activeCount = runningTools.filter(t => t.status === 'running').length;
+  const completedCount = runningTools.filter(t => t.status === 'completed').length;
+  const failedCount = runningTools.filter(t => t.status === 'failed').length;
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 20, scale: 0.95 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      exit={{ opacity: 0, y: 20, scale: 0.95 }}
+      className="fixed bottom-24 right-6 w-96 z-[100] font-mono"
+    >
+      <div className="bg-[#050505]/95 border border-white/10 shadow-[0_0_50px_rgba(0,0,0,0.5)] backdrop-blur-2xl rounded-lg overflow-hidden flex flex-col max-h-[80vh]">
+        {/* Header */}
+        <div className="flex items-center justify-between p-4 border-b border-white/5 bg-gradient-to-r from-neon-cyan/10 to-transparent">
+          <div className="flex items-center gap-3">
+            <div className="relative">
+              <Activity size={18} className="text-neon-cyan" />
+              {activeCount > 0 && (
+                <span className="absolute -top-1 -right-1 w-2 h-2 bg-neon-cyan rounded-full" />
+              )}
+            </div>
+            <div>
+              <h3 className="text-[11px] font-black uppercase tracking-[0.3em] text-white leading-none">Live Ops Monitor</h3>
+              <p className="text-[9px] text-white/40 mt-1 uppercase tracking-wider">
+                {activeCount} Active • {completedCount} Done • {failedCount} Failed
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-3">
+            <button 
+              onClick={onClearLogs}
+              className="group flex items-center gap-2 px-2 py-1 rounded border border-white/5 hover:border-neon-magenta/50 transition-all"
+              title="Clear all logs"
+            >
+              <Trash2 size={10} className="text-white/40 group-hover:text-neon-magenta" />
+              <span className="text-[8px] text-white/40 group-hover:text-neon-magenta uppercase font-bold">Wipe</span>
+            </button>
+            <button 
+              onClick={onClose}
+              className="text-white/20 hover:text-white transition-colors"
+            >
+              <XCircle size={16} />
+            </button>
+          </div>
+        </div>
+
+        {/* Global Progress */}
+        {activeCount > 0 && (
+          <div className="h-0.5 w-full bg-white/5 overflow-hidden">
+            <div className="h-full bg-neon-cyan shadow-[0_0_10px_#00f3ff]" style={{ width: '100%', animation: 'none' }} />
+          </div>
+        )}
+        
+        {/* Tool List */}
+        <div className="flex-1 overflow-y-auto p-4 space-y-3 custom-scrollbar">
+          {runningTools.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-12 text-center opacity-20">
+              <Activity size={32} className="mb-4" />
+              <p className="text-[10px] uppercase tracking-widest font-bold">No active processes</p>
+              <p className="text-[8px] mt-1">Start a scan to monitor live operations</p>
+            </div>
+          ) : (
+            <AnimatePresence initial={false}>
+              {runningTools.map((tool) => (
+                <motion.div 
+                  key={tool.id}
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, scale: 0.95 }}
+                  className={`group relative rounded-md border transition-all duration-200 ${
+                    expandedToolId === tool.id 
+                      ? 'bg-white/5 border-white/20' 
+                      : 'bg-white/[0.02] border-white/5 hover:border-white/10'
+                  }`}
+                >
+                  <div 
+                    className="p-3 cursor-pointer"
+                    onClick={() => setExpandedToolId(expandedToolId === tool.id ? null : tool.id)}
+                  >
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="flex items-center gap-2">
+                        <span className={`w-1.5 h-1.5 rounded-full ${
+                          tool.status === 'completed' ? 'bg-neon-lime shadow-[0_0_5px_#39ff14]' : 
+                          tool.status === 'failed' ? 'bg-red-500 shadow-[0_0_5px_#ef4444]' : 
+                          'bg-neon-cyan shadow-[0_0_5px_#00f3ff]'
+                        }`} />
+                        <span className="text-[10px] text-white/90 font-bold uppercase tracking-widest">{tool.name}</span>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <span className="text-[9px] text-white/30 font-mono">
+                          {Math.floor((Date.now() - tool.startTime) / 1000)}s
+                        </span>
+                        <ChevronDown 
+                          size={12} 
+                          className={`text-white/20 transition-transform duration-300 ${expandedToolId === tool.id ? 'rotate-180' : ''}`} 
+                        />
+                      </div>
+                    </div>
+
+                    {/* Mini Progress Bar */}
+                    <div className="h-1 w-full bg-white/5 rounded-full overflow-hidden">
+                      <motion.div 
+                        className={`h-full transition-all duration-500 ${
+                          tool.status === 'completed' ? 'bg-neon-lime' : 
+                          tool.status === 'failed' ? 'bg-red-500' : 
+                          'bg-neon-cyan'
+                        }`}
+                        initial={{ width: 0 }}
+                        animate={{ width: `${tool.status === 'completed' ? 100 : tool.status === 'failed' ? 100 : Math.max(10, tool.progress)}%` }}
+                      />
+                    </div>
+
+                    {/* Status Text */}
+                    <div className="flex items-center justify-between mt-2">
+                      <span className="text-[8px] text-white/40 uppercase tracking-tighter">
+                        {tool.category} • {tool.type}
+                      </span>
+                      <span className={`text-[8px] font-black uppercase ${
+                        tool.status === 'completed' ? 'text-neon-lime' : 
+                        tool.status === 'failed' ? 'text-red-500' : 
+                        'text-neon-cyan'
+                      }`}>
+                        {tool.status === 'running' ? `Processing_${Math.floor(tool.progress)}%` : tool.status}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Expanded Details */}
+                  <AnimatePresence>
+                    {expandedToolId === tool.id && (
+                      <motion.div
+                        initial={{ height: 0, opacity: 0 }}
+                        animate={{ height: 'auto', opacity: 1 }}
+                        exit={{ height: 0, opacity: 0 }}
+                        className="overflow-hidden border-t border-white/5 bg-black/40"
+                      >
+                        <div className="p-3 space-y-3 max-h-64 overflow-y-auto custom-scrollbar">
+                          {/* Logs */}
+                          <div className="space-y-1">
+                            <p className="text-[8px] text-white/20 uppercase font-bold tracking-widest mb-2">Execution_Logs</p>
+                            {tool.logs?.map((log: string, i: number) => (
+                              <div key={i} className="flex gap-2 text-[9px] font-mono">
+                                <span className="text-white/10">[{i}]</span>
+                                <span className="text-white/60">{log}</span>
+                              </div>
+                            ))}
+                            {tool.status === 'running' && (
+                              <div className="flex gap-2 text-[9px] font-mono animate-pulse">
+                                <span className="text-white/10">[*]</span>
+                                <span className="text-neon-cyan">Awaiting server response...</span>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                </motion.div>
+              ))}
+            </AnimatePresence>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="p-4 border-t border-white/5 bg-black/50">
+          <div className="grid grid-cols-2 gap-3">
+            <button 
+              onClick={onExportJSON}
+              disabled={runningTools.length === 0}
+              className="flex items-center justify-center gap-2 py-2 bg-white/5 border border-white/10 rounded text-[8px] text-white/60 uppercase font-bold tracking-widest hover:bg-white/10 hover:text-white transition-all disabled:opacity-30 disabled:cursor-not-allowed"
+            >
+              <Download size={10} />
+              Export_JSON
+            </button>
+            <button 
+              onClick={onDownloadLog}
+              disabled={runningTools.length === 0}
+              className="flex items-center justify-center gap-2 py-2 bg-white/5 border border-white/10 rounded text-[8px] text-white/60 uppercase font-bold tracking-widest hover:bg-white/10 hover:text-white transition-all disabled:opacity-30 disabled:cursor-not-allowed"
+            >
+              <FileText size={10} />
+              Download_Log
+            </button>
+          </div>
+        </div>
+      </div>
+    </motion.div>
+  );
+});
 
 const CommandPalette = ({ onClose, onSelect }: { onClose: () => void, onSelect: (tool: OSINTTool) => void }) => {
   const [query, setQuery] = useState('');
