@@ -63,10 +63,17 @@ async function startServer() {
   app.get('/api/osint/whois', async (req, res) => {
     const { target } = req.query;
     if (!target) return res.status(400).json({ error: 'Target required' });
+    
+    let query = String(target);
+    if (query.includes('@')) {
+      query = query.split('@')[1];
+    }
+    
     try {
-      const results = await whois(target as string);
+      const results = await whois(query);
       res.json(results);
     } catch (error) {
+      console.error('WHOIS error:', error);
       res.status(500).json({ error: 'WHOIS lookup failed' });
     }
   });
@@ -143,22 +150,29 @@ async function startServer() {
     }
   });
 
-  app.get('/api/osint/search', async (req, res) => {
-    const { q } = req.query;
-    if (!q) return res.status(400).json({ error: 'Query required' });
-    
-    const query = String(q);
-    const isDork = query.includes('site:') || query.includes('filetype:') || query.includes('intitle:') || query.includes('inurl:');
+  const searchLimit = pLimit(2); // Very low concurrency for search engines to avoid blocks
+  const socialLimit = pLimit(5); // Lower concurrency for social scans
+  
+  const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
+  async function scrapeSearchEngines(query: string) {
+    const userAgents = [
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
+      'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36',
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/121.0',
+      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:109.0) Gecko/20100101 Firefox/120.0',
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Edge/120.0.0.0',
+      'Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:120.0) Gecko/20100101 Firefox/120.0',
+      'Mozilla/5.0 (iPhone; CPU iPhone OS 17_1_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Mobile/15E148 Safari/604.1'
+    ];
+    
+    const isDork = query.includes('site:') || query.includes('filetype:') || query.includes('intitle:') || query.includes('inurl:');
+    const results: any[] = [];
+
+    // Try Google first
     try {
-      const userAgents = [
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
-        'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36',
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/121.0'
-      ];
-      
-      // Try Google first
+      await sleep(Math.random() * 1000 + 500); // Add jitter/delay
       const googleUrl = `https://www.google.com/search?q=${encodeURIComponent(query)}&num=20`;
       const response = await axios.get(googleUrl, {
         headers: {
@@ -172,9 +186,6 @@ async function startServer() {
       });
       
       const $ = cheerio.load(response.data);
-      const results: any[] = [];
-      
-      // Selectors for Google results
       const selectors = ['div.g', 'div.tF2Cxc', 'div.yuRUbf', 'div.kvH9C', 'div.Z26q7c', 'div.MjjYud'];
       
       selectors.forEach(selector => {
@@ -188,59 +199,68 @@ async function startServer() {
           }
         });
       });
-      
-      // If Google fails or returns no results (could be blocked), try DuckDuckGo
-      if (results.length === 0) {
-        try {
-          const ddgUrl = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
-          const ddgResponse = await axios.get(ddgUrl, {
-            headers: { 'User-Agent': userAgents[0] },
-            timeout: 8000
-          });
-          const $ddg = cheerio.load(ddgResponse.data);
-          $ddg('.result').each((i, el) => {
-            const title = $ddg(el).find('.result__title').text().trim();
-            const link = $ddg(el).find('.result__a').attr('href');
-            const snippet = $ddg(el).find('.result__snippet').text().trim();
-            if (title && link) {
-              const finalLink = link.startsWith('//') ? 'https:' + link : link;
-              if (!results.find(r => r.link === finalLink)) {
-                results.push({ 
-                  title, 
-                  link: finalLink, 
-                  snippet,
-                  source: 'DuckDuckGo'
-                });
-              }
-            }
-          });
-        } catch (e) {
-          console.error('DDG fallback failed:', e);
-        }
-      }
+    } catch (e: any) {
+      console.error('Google search failed:', e.message);
+    }
 
-      // If still no results and it's a dork, try Bing (sometimes more lenient)
-      if (results.length === 0 && isDork) {
-        try {
-          const bingUrl = `https://www.bing.com/search?q=${encodeURIComponent(query)}`;
-          const bingResponse = await axios.get(bingUrl, {
-            headers: { 'User-Agent': userAgents[1] },
-            timeout: 8000
-          });
-          const $bing = cheerio.load(bingResponse.data);
-          $bing('.b_algo').each((i, el) => {
-            const title = $bing(el).find('h2').text().trim();
-            const link = $bing(el).find('a').attr('href');
-            const snippet = $bing(el).find('.b_caption p').text().trim();
-            if (title && link && !results.find(r => r.link === link)) {
-              results.push({ title, link, snippet, source: 'Bing' });
+    // If Google fails or returns no results, try DuckDuckGo
+    if (results.length === 0) {
+      try {
+        await sleep(Math.random() * 1000 + 500); // Add jitter/delay
+        const ddgUrl = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
+        const ddgResponse = await axios.get(ddgUrl, {
+          headers: { 'User-Agent': userAgents[0] },
+          timeout: 8000
+        });
+        const $ddg = cheerio.load(ddgResponse.data);
+        $ddg('.result').each((i, el) => {
+          const title = $ddg(el).find('.result__title').text().trim();
+          const link = $ddg(el).find('.result__a').attr('href');
+          const snippet = $ddg(el).find('.result__snippet').text().trim();
+          if (title && link) {
+            const finalLink = link.startsWith('//') ? 'https:' + link : link;
+            if (!results.find(r => r.link === finalLink)) {
+              results.push({ title, link: finalLink, snippet, source: 'DuckDuckGo' });
             }
-          });
-        } catch (e) {
-          console.error('Bing fallback failed:', e);
-        }
+          }
+        });
+      } catch (e: any) {
+        console.error('DDG fallback failed:', e.message);
       }
-      
+    }
+
+    // Try Bing if still no results and it's a dork
+    if (results.length === 0 && isDork) {
+      try {
+        await sleep(Math.random() * 1000 + 500); // Add jitter/delay
+        const bingUrl = `https://www.bing.com/search?q=${encodeURIComponent(query)}`;
+        const bingResponse = await axios.get(bingUrl, {
+          headers: { 'User-Agent': userAgents[1] },
+          timeout: 8000
+        });
+        const $bing = cheerio.load(bingResponse.data);
+        $bing('.b_algo').each((i, el) => {
+          const title = $bing(el).find('h2').text().trim();
+          const link = $bing(el).find('a').attr('href');
+          const snippet = $bing(el).find('.b_caption p').text().trim();
+          if (title && link && !results.find(r => r.link === link)) {
+            results.push({ title, link, snippet, source: 'Bing' });
+          }
+        });
+      } catch (e: any) {
+        console.error('Bing fallback failed:', e.message);
+      }
+    }
+
+    return results;
+  }
+
+  app.get('/api/osint/search', async (req, res) => {
+    const { q } = req.query;
+    if (!q) return res.status(400).json({ error: 'Query required' });
+    
+    try {
+      const results = await searchLimit(() => scrapeSearchEngines(String(q)));
       res.json(results);
     } catch (error) {
       console.error('Search error:', error);
@@ -1382,9 +1402,9 @@ async function startServer() {
       }
     }
 
-    const limit = pLimit(20); // Increased concurrency
-    const results = await Promise.all(sites.map((site) => limit(async () => {
+    const results = await Promise.all(sites.map((site) => socialLimit(async () => {
       try {
+        await sleep(Math.random() * 500); // Small jitter
         const response = await axios.get(site.url, { 
           timeout: 4000, // Reduced timeout for faster overall scan
           validateStatus: () => true,

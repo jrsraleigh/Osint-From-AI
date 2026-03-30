@@ -1932,20 +1932,20 @@ function App() {
 
     const workflowId = addRunningTool(`WORKFLOW: ${group.name}`, 'workflow', 'Workflow');
 
-    // Run tools in parallel for better performance, but keep track of progress
-    const toolPromises = group.toolIds.map(async (id) => {
+    // Run tools sequentially with a small delay to avoid rate limiting
+    for (const id of group.toolIds) {
       const tool = OSINT_TOOLS.find(t => t.id === id);
-      if (!tool) return null;
+      if (!tool) continue;
 
       setCurrentlyRunningToolId(id);
       
       // Use intelligent search queries for tools that support it
       let api = '';
-      if (tool.id === 'ghunt') {
+      if (tool.id === '36') { // GHunt
         api = `/api/osint/search?q=${encodeURIComponent(`"${searchQuery}" google account -inurl:login -inurl:signin -inurl:signup`)}`;
-      } else if (tool.id === 'epieos') {
+      } else if (tool.id === '11') { // EPIEOS
         api = `/api/osint/search?q=${encodeURIComponent(`site:epieos.com "${searchQuery}"`)}`;
-      } else if (tool.id === 'holehe') {
+      } else if (tool.id === '18') { // Holehe
         api = `/api/osint/search?q=${encodeURIComponent(`"${searchQuery}" account -inurl:login -inurl:signin -inurl:signup`)}`;
       } else if (tool.id === '10') { // Whois.com
         api = `/api/osint/whois?target=${encodeURIComponent(searchQuery)}`;
@@ -1958,20 +1958,25 @@ function App() {
         api = `/api/osint/wayback-timeline?url=${encodeURIComponent(searchQuery)}`;
       } else {
         const url = tool.searchUrl ? tool.searchUrl.replace('{query}', encodeURIComponent(searchQuery)) : tool.url;
-        if (url.includes('google.com/search')) {
-          const q = new URL(url).searchParams.get('q');
-          api = `/api/osint/search?q=${encodeURIComponent(q || searchQuery)}`;
-        } else {
+        try {
+          if (url.includes('google.com/search')) {
+            const searchUrlObj = new URL(url);
+            const q = searchUrlObj.searchParams.get('q');
+            api = `/api/osint/search?q=${encodeURIComponent(q || searchQuery)}`;
+          } else {
+            api = `/api/osint/proxy-tool?url=${encodeURIComponent(url)}`;
+          }
+        } catch (e) {
           api = `/api/osint/proxy-tool?url=${encodeURIComponent(url)}`;
         }
       }
 
-      const results = await runTool(tool.name, api, id, tool.category);
+      await runTool(tool.name, api, id, tool.category);
       setWorkflowProgress(prev => ({ ...prev, [id]: true }));
-      return { id, results };
-    });
-
-    await Promise.all(toolPromises);
+      
+      // Add a small jittered delay between tools
+      await new Promise(resolve => setTimeout(resolve, 800 + Math.random() * 700));
+    }
 
     setCurrentlyRunningToolId(null);
     setIsScanning(false);
