@@ -4,6 +4,7 @@ import path from 'path';
 import whois from 'whois-json';
 import dns from 'dns';
 import axios from 'axios';
+import axiosRetry from 'axios-retry';
 import * as cheerio from 'cheerio';
 import Parser from 'rss-parser';
 import pLimit from 'p-limit';
@@ -206,6 +207,18 @@ async function startServer() {
   
   const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
+  // Configure axios-retry for search engine resilience
+  axiosRetry(axios, { 
+    retries: 3, 
+    retryDelay: axiosRetry.exponentialDelay,
+    retryCondition: (error) => {
+      // Retry on network errors, 5xx, and 429
+      return axiosRetry.isNetworkOrIdempotentRequestError(error) || 
+             error.response?.status === 500 || 
+             error.response?.status === 429;
+    }
+  });
+
   async function scrapeSearchEngines(query: string, depth = 0) {
     if (depth > 5) {
       console.log('Max search depth reached for query:', query);
@@ -219,7 +232,11 @@ async function startServer() {
       'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:109.0) Gecko/20100101 Firefox/120.0',
       'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Edge/120.0.0.0',
       'Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:120.0) Gecko/20100101 Firefox/120.0',
-      'Mozilla/5.0 (iPhone; CPU iPhone OS 17_1_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Mobile/15E148 Safari/604.1'
+      'Mozilla/5.0 (iPhone; CPU iPhone OS 17_1_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Mobile/15E148 Safari/604.1',
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+      'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:122.0) Gecko/20100101 Firefox/122.0'
     ];
     
     const isDork = query.includes('site:') || query.includes('filetype:') || query.includes('intitle:') || query.includes('inurl:');
@@ -369,7 +386,7 @@ async function startServer() {
         await sleep(Math.random() * 1000 + 500); // Add jitter/delay
         const bingUrl = `https://www.bing.com/search?q=${encodeURIComponent(query)}`;
         const bingResponse = await axios.get(bingUrl, {
-          headers: { 'User-Agent': userAgents[1] },
+          headers: { 'User-Agent': userAgents[Math.floor(Math.random() * userAgents.length)] },
           timeout: 8000
         });
         const $bing = cheerio.load(bingResponse.data);
@@ -386,14 +403,71 @@ async function startServer() {
       }
     }
 
+    // Try Brave Search if still no results
+    if (results.length === 0) {
+      try {
+        await sleep(Math.random() * 500 + 200);
+        const braveUrl = `https://search.brave.com/search?q=${encodeURIComponent(query)}`;
+        const braveResponse = await axios.get(braveUrl, {
+          headers: { 
+            'User-Agent': userAgents[Math.floor(Math.random() * userAgents.length)],
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.5'
+          },
+          timeout: 8000
+        });
+        const $brave = cheerio.load(braveResponse.data);
+        $brave('.snippet').each((i, el) => {
+          const title = $brave(el).find('.title').text().trim();
+          const link = $brave(el).find('a').first().attr('href');
+          const snippet = $brave(el).find('.description').text().trim();
+          if (title && link && !results.find(r => r.link === link)) {
+            results.push({ title, link, snippet, source: 'Brave' });
+          }
+        });
+      } catch (e: any) {
+        console.error('Brave fallback failed:', e.message);
+      }
+    }
+
+    // Try Mojeek if still no results
+    if (results.length === 0) {
+      try {
+        await sleep(Math.random() * 500 + 200);
+        const mojeekUrl = `https://www.mojeek.com/search?q=${encodeURIComponent(query)}`;
+        const mojeekResponse = await axios.get(mojeekUrl, {
+          headers: { 'User-Agent': userAgents[Math.floor(Math.random() * userAgents.length)] },
+          timeout: 8000
+        });
+        const $mojeek = cheerio.load(mojeekResponse.data);
+        $mojeek('.results-standard li').each((i, el) => {
+          const title = $mojeek(el).find('h2').text().trim();
+          const link = $mojeek(el).find('a').first().attr('href');
+          const snippet = $mojeek(el).find('p').text().trim();
+          if (title && link && !results.find(r => r.link === link)) {
+            results.push({ title, link, snippet, source: 'Mojeek' });
+          }
+        });
+      } catch (e: any) {
+        console.error('Mojeek fallback failed:', e.message);
+      }
+    }
+
     // Final fallback to Yahoo if still no results
     if (results.length === 0) {
       try {
         await sleep(Math.random() * 1000 + 500);
         const yahooUrl = `https://search.yahoo.com/search?p=${encodeURIComponent(query)}`;
         const yahooResponse = await axios.get(yahooUrl, {
-          headers: { 'User-Agent': userAgents[2] },
-          timeout: 8000
+          headers: { 
+            'User-Agent': userAgents[Math.floor(Math.random() * userAgents.length)],
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.5',
+            'Referer': 'https://www.yahoo.com/',
+            'DNT': '1',
+            'Upgrade-Insecure-Requests': '1'
+          },
+          timeout: 10000
         });
         const $yahoo = cheerio.load(yahooResponse.data);
         $yahoo('.algo-sr').each((i, el) => {
