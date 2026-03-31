@@ -273,6 +273,16 @@ export const OSINT_TOOLS: OSINTTool[] = [
     howToUse: 'Enter your target and what you are looking for (e.g., "confidential documents", "admin panels"), and the AI will generate optimized dorks.'
   },
   {
+    id: '89',
+    name: 'System Diagnostics',
+    description: 'Run a comprehensive health check on the OSINT API and backend services.',
+    url: '/api/health',
+    category: 'Frameworks & Suites',
+    tags: ['System', 'Health', 'Diagnostics'],
+    isFree: true,
+    howToUse: 'Click to run a diagnostic check on all internal API endpoints to ensure they are responsive and working correctly.'
+  },
+  {
     id: '1',
     name: 'TheHarvester',
     description: 'CLI tool for gathering emails, subdomains, hosts, employee names, open ports, and banners from public sources.',

@@ -4,7 +4,6 @@ import path from 'path';
 import whois from 'whois-json';
 import dns from 'dns';
 import axios from 'axios';
-import axiosRetry from 'axios-retry';
 import * as cheerio from 'cheerio';
 import Parser from 'rss-parser';
 import pLimit from 'p-limit';
@@ -18,7 +17,14 @@ async function startServer() {
     },
   });
 
-  app.use(express.json());
+  app.get('/api/health', (req, res) => {
+    res.json({ 
+      status: 'ok', 
+      timestamp: new Date().toISOString(),
+      environment: process.env.NODE_ENV || 'development',
+      version: '1.2.0'
+    });
+  });
 
   // OSINT API Endpoints
   app.get('/api/osint/news', async (req, res) => {
@@ -100,10 +106,27 @@ async function startServer() {
       const timeoutPromise = new Promise((_, reject) => 
         setTimeout(() => reject(new Error('WHOIS lookup timed out')), 15000)
       );
-      const results = await Promise.race([whois(query), timeoutPromise]) as any;
+      
+      let results;
+      try {
+        results = await Promise.race([whois(query), timeoutPromise]) as any;
+      } catch (e: any) {
+        console.warn('Standard WHOIS failed, trying RDAP fallback:', e.message);
+        // Fallback to RDAP (Registration Data Access Protocol)
+        try {
+          const rdapResponse = await axios.get(`https://rdap.org/domain/${query}`, { timeout: 10000, validateStatus: () => true });
+          if (rdapResponse.status === 200) {
+            results = rdapResponse.data;
+          } else {
+            throw e; // Re-throw if RDAP also fails
+          }
+        } catch (rdapErr) {
+          throw e; // Re-throw original error if RDAP fails
+        }
+      }
       
       // whois-json sometimes returns an empty object or an object with an error property
-      if (!results || Object.keys(results).length === 0 || results.error) {
+      if (!results || (Object.keys(results).length === 0 && !results.entities) || results.error) {
         return res.status(404).json({ error: 'No WHOIS data found' });
       }
       res.json(results);
@@ -123,20 +146,72 @@ async function startServer() {
     const { target } = req.query;
     if (!target) return res.status(400).json({ error: 'Target required' });
     
-    const resolvePromise = new Promise((resolve, reject) => {
-      dns.resolveAny(target as string, (err, addresses) => {
-        if (err) reject(err);
-        else resolve(addresses);
-      });
-    });
-
-    const timeoutPromise = new Promise((_, reject) => 
-      setTimeout(() => reject(new Error('DNS lookup timed out')), 10000)
-    );
+    let query = String(target).trim();
+    if (query.includes('://')) {
+      try {
+        const url = new URL(query);
+        query = url.hostname;
+      } catch (e) {
+        query = query.split('://')[1].split('/')[0];
+      }
+    } else if (query.includes('/')) {
+      query = query.split('/')[0];
+    }
+    if (query.includes('@')) {
+      query = query.split('@')[1];
+    }
 
     try {
-      const addresses = await Promise.race([resolvePromise, timeoutPromise]);
-      res.json(addresses);
+      const results: any = {};
+      const recordTypes: any[] = ['A', 'AAAA', 'MX', 'TXT', 'NS', 'CNAME', 'SOA'];
+      
+      const dnsPromises = recordTypes.map(type => new Promise((resolve) => {
+        dns.resolve(query, type, (err, addresses) => {
+          if (err) resolve({ type, data: [] });
+          else resolve({ type, data: addresses });
+        });
+      }));
+
+      const dnsResults = (await Promise.all(dnsPromises)) as any[];
+      dnsResults.forEach((r: any) => {
+        if (r.data && r.data.length > 0) {
+          results[r.type] = r.data;
+        }
+      });
+
+      // Fallback to Google DNS API if local resolution fails or returns nothing
+      if (Object.keys(results).length === 0) {
+        try {
+          const googleDnsRes = await axios.get(`https://dns.google/resolve?name=${query}&type=ANY`, { timeout: 5000 });
+          if (googleDnsRes.data && googleDnsRes.data.Answer) {
+            googleDnsRes.data.Answer.forEach((ans: any) => {
+              const typeMap: any = { 1: 'A', 28: 'AAAA', 15: 'MX', 16: 'TXT', 2: 'NS', 5: 'CNAME', 6: 'SOA' };
+              const typeName = typeMap[ans.type] || `TYPE_${ans.type}`;
+              if (!results[typeName]) results[typeName] = [];
+              results[typeName].push(ans.data);
+            });
+          }
+        } catch (e) {
+          console.warn('Google DNS fallback failed:', e);
+        }
+      }
+
+      if (Object.keys(results).length === 0) {
+        // One last try with resolveAny
+        try {
+          const anyResults = await new Promise((resolve, reject) => {
+            dns.resolveAny(query, (err, addresses) => {
+              if (err) reject(err);
+              else resolve(addresses);
+            });
+          });
+          return res.json(anyResults);
+        } catch (e) {
+          return res.status(404).json({ error: 'No DNS records found' });
+        }
+      }
+
+      res.json(results);
     } catch (error: any) {
       console.error('DNS error:', error);
       res.status(500).json({ error: error.message || 'DNS lookup failed' });
@@ -207,18 +282,6 @@ async function startServer() {
   
   const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
-  // Configure axios-retry for search engine resilience
-  axiosRetry(axios, { 
-    retries: 3, 
-    retryDelay: axiosRetry.exponentialDelay,
-    retryCondition: (error) => {
-      // Retry on network errors, 5xx, and 429
-      return axiosRetry.isNetworkOrIdempotentRequestError(error) || 
-             error.response?.status === 500 || 
-             error.response?.status === 429;
-    }
-  });
-
   async function scrapeSearchEngines(query: string, depth = 0) {
     if (depth > 5) {
       console.log('Max search depth reached for query:', query);
@@ -233,10 +296,9 @@ async function startServer() {
       'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Edge/120.0.0.0',
       'Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:120.0) Gecko/20100101 Firefox/120.0',
       'Mozilla/5.0 (iPhone; CPU iPhone OS 17_1_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Mobile/15E148 Safari/604.1',
-      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
-      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
-      'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
-      'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:122.0) Gecko/20100101 Firefox/122.0'
+      'Mozilla/5.0 (iPad; CPU OS 17_1_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Mobile/15E148 Safari/604.1',
+      'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_1) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Safari/605.1.15',
+      'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Mobile Safari/537.36'
     ];
     
     const isDork = query.includes('site:') || query.includes('filetype:') || query.includes('intitle:') || query.includes('inurl:');
@@ -320,48 +382,81 @@ async function startServer() {
 
     const results: any[] = [];
 
-    // Try Google first
-    try {
-      await sleep(Math.random() * 500 + 200); // Reduced jitter
-      const googleUrl = `https://www.google.com/search?q=${encodeURIComponent(query)}&num=30`;
-      const response = await axios.get(googleUrl, {
-        headers: {
-          'User-Agent': userAgents[Math.floor(Math.random() * userAgents.length)],
-          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-          'Accept-Language': 'en-US,en;q=0.5',
-          'Connection': 'keep-alive',
-          'Upgrade-Insecure-Requests': '1',
-          'Cache-Control': 'max-age=0'
-        },
-        timeout: 15000
-      });
-      
-      const $ = cheerio.load(response.data);
-      const selectors = ['div.g', 'div.tF2Cxc', 'div.yuRUbf', 'div.kvH9C', 'div.Z26q7c', 'div.MjjYud'];
-      
-      selectors.forEach(selector => {
-        $(selector).each((i, el) => {
-          const title = $(el).find('h3').first().text().trim();
-          const link = $(el).find('a').first().attr('href');
-          const snippet = $(el).find('div.VwiC3b, .st, div.kb0Bcb, div.LGOjbe').first().text().trim();
-          
-          if (title && link && link.startsWith('http') && !results.find(r => r.link === link)) {
-            results.push({ title, link, snippet, source: 'Google' });
-          }
+    // Try Google first with a retry mechanism
+    let googleRetries = 0;
+    const maxGoogleRetries = 2;
+    
+    while (googleRetries <= maxGoogleRetries) {
+      try {
+        const waitTime = googleRetries === 0 ? (Math.random() * 1000 + 500) : (Math.random() * 3000 * Math.pow(2, googleRetries));
+        await sleep(waitTime);
+        
+        const userAgent = userAgents[Math.floor(Math.random() * userAgents.length)];
+        const googleUrl = `https://www.google.com/search?q=${encodeURIComponent(query)}&num=30`;
+        
+        const response = await axios.get(googleUrl, {
+          headers: {
+            'User-Agent': userAgent,
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.5',
+            'Referer': 'https://www.google.com/',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1',
+            'Cache-Control': 'max-age=0'
+          },
+          timeout: 15000,
+          validateStatus: (status) => status < 500 // Don't throw on 429
         });
-      });
-    } catch (e: any) {
-      console.error('Google search failed:', e.message);
+        
+        console.log(`[Search] Google status: ${response.status} for query: ${query}`);
+
+        if (response.status === 429) {
+          console.warn(`[Search] Google rate limit (429) hit, retry ${googleRetries + 1}/${maxGoogleRetries}...`);
+          googleRetries++;
+          if (googleRetries > maxGoogleRetries) break;
+          continue;
+        }
+
+        const $ = cheerio.load(response.data);
+        const selectors = ['div.g', 'div.tF2Cxc', 'div.yuRUbf', 'div.kvH9C', 'div.Z26q7c', 'div.MjjYud', 'div.sr__group', 'div.BNeawe'];
+        
+        let foundInGoogle = 0;
+        selectors.forEach(selector => {
+          $(selector).each((i, el) => {
+            const title = $(el).find('h3, .vv778b, .BNeawe').first().text().trim();
+            const link = $(el).find('a').first().attr('href');
+            const snippet = $(el).find('div.VwiC3b, .st, div.kb0Bcb, div.LGOjbe, .BNeawe').first().text().trim();
+            
+            if (title && link && link.startsWith('http') && !results.find(r => r.link === link)) {
+              results.push({ title, link, snippet, source: 'Google' });
+              foundInGoogle++;
+            }
+          });
+        });
+        
+        console.log(`[Search] Google found ${foundInGoogle} results`);
+        if (results.length > 0) break; // Success
+        googleRetries++; // No results, maybe try again or move on
+      } catch (e: any) {
+        console.error('Google search failed:', e.message);
+        break;
+      }
     }
 
     // If Google fails or returns no results, try DuckDuckGo
     if (results.length === 0) {
       try {
-        await sleep(Math.random() * 300 + 100); // Reduced jitter
+        console.log(`[Search] Falling back to DuckDuckGo for: ${query}`);
+        await sleep(Math.random() * 500 + 300);
         const ddgUrl = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
+        const userAgent = userAgents[Math.floor(Math.random() * userAgents.length)];
         const ddgResponse = await axios.get(ddgUrl, {
-          headers: { 'User-Agent': userAgents[0] },
-          timeout: 8000
+          headers: { 
+            'User-Agent': userAgent,
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+            'Referer': 'https://duckduckgo.com/'
+          },
+          timeout: 10000
         });
         const $ddg = cheerio.load(ddgResponse.data);
         $ddg('.result').each((i, el) => {
@@ -383,11 +478,16 @@ async function startServer() {
     // Try Bing if still no results and it's a dork
     if (results.length === 0 && isDork) {
       try {
-        await sleep(Math.random() * 1000 + 500); // Add jitter/delay
+        await sleep(Math.random() * 1000 + 500);
         const bingUrl = `https://www.bing.com/search?q=${encodeURIComponent(query)}`;
+        const userAgent = userAgents[Math.floor(Math.random() * userAgents.length)];
         const bingResponse = await axios.get(bingUrl, {
-          headers: { 'User-Agent': userAgents[Math.floor(Math.random() * userAgents.length)] },
-          timeout: 8000
+          headers: { 
+            'User-Agent': userAgent,
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+            'Referer': 'https://www.bing.com/'
+          },
+          timeout: 10000
         });
         const $bing = cheerio.load(bingResponse.data);
         $bing('.b_algo').each((i, el) => {
@@ -403,69 +503,17 @@ async function startServer() {
       }
     }
 
-    // Try Brave Search if still no results
-    if (results.length === 0) {
-      try {
-        await sleep(Math.random() * 500 + 200);
-        const braveUrl = `https://search.brave.com/search?q=${encodeURIComponent(query)}`;
-        const braveResponse = await axios.get(braveUrl, {
-          headers: { 
-            'User-Agent': userAgents[Math.floor(Math.random() * userAgents.length)],
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-            'Accept-Language': 'en-US,en;q=0.5'
-          },
-          timeout: 8000
-        });
-        const $brave = cheerio.load(braveResponse.data);
-        $brave('.snippet').each((i, el) => {
-          const title = $brave(el).find('.title').text().trim();
-          const link = $brave(el).find('a').first().attr('href');
-          const snippet = $brave(el).find('.description').text().trim();
-          if (title && link && !results.find(r => r.link === link)) {
-            results.push({ title, link, snippet, source: 'Brave' });
-          }
-        });
-      } catch (e: any) {
-        console.error('Brave fallback failed:', e.message);
-      }
-    }
-
-    // Try Mojeek if still no results
-    if (results.length === 0) {
-      try {
-        await sleep(Math.random() * 500 + 200);
-        const mojeekUrl = `https://www.mojeek.com/search?q=${encodeURIComponent(query)}`;
-        const mojeekResponse = await axios.get(mojeekUrl, {
-          headers: { 'User-Agent': userAgents[Math.floor(Math.random() * userAgents.length)] },
-          timeout: 8000
-        });
-        const $mojeek = cheerio.load(mojeekResponse.data);
-        $mojeek('.results-standard li').each((i, el) => {
-          const title = $mojeek(el).find('h2').text().trim();
-          const link = $mojeek(el).find('a').first().attr('href');
-          const snippet = $mojeek(el).find('p').text().trim();
-          if (title && link && !results.find(r => r.link === link)) {
-            results.push({ title, link, snippet, source: 'Mojeek' });
-          }
-        });
-      } catch (e: any) {
-        console.error('Mojeek fallback failed:', e.message);
-      }
-    }
-
     // Final fallback to Yahoo if still no results
     if (results.length === 0) {
       try {
         await sleep(Math.random() * 1000 + 500);
         const yahooUrl = `https://search.yahoo.com/search?p=${encodeURIComponent(query)}`;
+        const userAgent = userAgents[Math.floor(Math.random() * userAgents.length)];
         const yahooResponse = await axios.get(yahooUrl, {
           headers: { 
-            'User-Agent': userAgents[Math.floor(Math.random() * userAgents.length)],
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-            'Accept-Language': 'en-US,en;q=0.5',
-            'Referer': 'https://www.yahoo.com/',
-            'DNT': '1',
-            'Upgrade-Insecure-Requests': '1'
+            'User-Agent': userAgent,
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+            'Referer': 'https://search.yahoo.com/'
           },
           timeout: 10000
         });
@@ -1640,22 +1688,25 @@ async function startServer() {
       }
     }
 
-    // Add a global timeout for the social scan to prevent hangs (4 minutes)
+    // Add a global timeout for the social scan to prevent hangs (6 minutes)
     const socialScanTimeout = new Promise((_, reject) => 
-      setTimeout(() => reject(new Error('Social scan timed out')), 240000)
+      setTimeout(() => reject(new Error('Social scan timed out')), 360000)
     );
 
     try {
       const results = await Promise.race([
         Promise.all(sites.map((site) => socialLimit(async () => {
       try {
-        await sleep(Math.random() * 500); // Small jitter
+        await sleep(Math.random() * 800 + 200); // Small jitter
         const response = await axios.get(site.url, { 
-          timeout: 4000, // Reduced timeout for faster overall scan
+          timeout: 6000, // Increased timeout slightly
           validateStatus: () => true,
           headers: {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
             'Accept-Language': 'en-US,en;q=0.9',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+            'Cache-Control': 'no-cache',
+            'Pragma': 'no-cache'
           }
         });
         

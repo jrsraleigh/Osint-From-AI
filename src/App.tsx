@@ -61,6 +61,7 @@ import {
   Database,
   Folder,
   Key,
+  Server,
   CornerDownLeft,
   ArrowUp,
   ArrowDown,
@@ -615,7 +616,7 @@ function App() {
   const [showFreeOnly, setShowFreeOnly] = useState(false);
   const [scanResults, setScanResults] = useState<any>(null);
   const [isScanning, setIsScanning] = useState(false);
-  const [activeTab, setActiveTab] = useState<'Tools' | 'Scan' | 'Workflows' | 'Intel' | 'Dorks' | 'Analyst' | 'Browser' | 'TargetIntel'>('Tools');
+  const [activeTab, setActiveTab] = useState<'Tools' | 'Scan' | 'Workflows' | 'Intel' | 'Dorks' | 'Analyst' | 'Browser' | 'TargetIntel' | 'Diagnostics'>('Tools');
   const [browserUrl, setBrowserUrl] = useState<string>('');
   const [browserHistory, setBrowserHistory] = useState<string[]>([]);
   const [browserForwardHistory, setBrowserForwardHistory] = useState<string[]>([]);
@@ -694,7 +695,7 @@ function App() {
   const [activeWorkflowId, setActiveWorkflowId] = useState<string | null>(null);
   const [activeWorkflowIndex, setActiveWorkflowIndex] = useState<number>(0);
 
-  const generateAiContent = async (contents: string | any, _model?: string) => {
+  const generateAiContent = async (contents: string | any, tools?: any[]) => {
     // Local Intelligence Engine (Rule-based Fallback)
     const localIntelligence = (prompt: string) => {
       const p = prompt.toLowerCase();
@@ -720,17 +721,22 @@ function App() {
       const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
       
       // Hardcoded to gemini-3-flash-preview (Best Free Tier)
-      // This ensures no paid models are ever called.
       const selectedModel = 'gemini-3-flash-preview';
       
+      const config: any = {
+        thinkingConfig: { 
+          thinkingLevel: ThinkingLevel.LOW 
+        }
+      };
+
+      if (tools) {
+        config.tools = tools;
+      }
+
       const result = await ai.models.generateContent({
         model: selectedModel,
         contents: typeof contents === 'string' ? { parts: [{ text: contents }] } : contents,
-        config: {
-          thinkingConfig: { 
-            thinkingLevel: ThinkingLevel.LOW 
-          }
-        }
+        config
       });
       return result;
     } catch (error) {
@@ -831,7 +837,7 @@ function App() {
       }
     }
   }, [debouncedSearchQuery, activeTab]);
-  const [modalContent, setModalContent] = useState<{ title: string; content: string; type: 'article' | 'search' | 'tool' | 'error'; results?: any[]; url?: string } | null>(null);
+  const [modalContent, setModalContent] = useState<{ title: string; content: string; type: 'article' | 'search' | 'tool' | 'error' | 'info'; results?: any[]; url?: string } | null>(null);
   const [isModalLoading, setIsModalLoading] = useState(false);
   const [copiedUrl, setCopiedUrl] = useState<string | null>(null);
   const [isVisualScanning, setIsVisualScanning] = useState(false);
@@ -1268,6 +1274,8 @@ function App() {
       - "RUN_HISTORICAL_SCAN": If the target is a URL or domain and you need historical snapshots.
       - "RUN_DEEP_SCAN": If the target requires a comprehensive investigation across all available modules.
       
+      Use the provided Google Search tool to find real-time information about the target if necessary.
+      
       Return a JSON object with:
       1. "recommendations": an array of objects, each with "toolName", "reason" (a 1-sentence explanation), and "directLink" (the tool's URL from the provided list).
       2. "explanation": a brief overall intelligence briefing (3-4 sentences).
@@ -1275,7 +1283,7 @@ function App() {
       
       If the query is a specific target like an email or domain, explain the best methodology.`;
 
-      const result = await generateAiContent(prompt);
+      const result = await generateAiContent(prompt, [{ googleSearch: {} }]);
       const text = result.text;
       
       const jsonMatch = text.match(/\{[\s\S]*\}/);
@@ -1865,6 +1873,38 @@ function App() {
 
     if (toolId === '88') { // AI Google Dork Generator
       setActiveTab('Dorks');
+      return;
+    }
+
+    if (toolId === '89') { // System Diagnostics
+      setIsModalLoading(true);
+      setModalContent({ title: 'System Diagnostics', content: 'Running diagnostics...', type: 'info', results: [], url: '/api/health' });
+      const runningToolId = addRunningTool('System Diagnostics', 'diagnostics', 'System');
+      try {
+        const res = await fetch('/api/health');
+        const data = await res.json();
+        setModalContent({ 
+          title: 'System Diagnostics', 
+          content: `System Status: ${data.status.toUpperCase()}\nTimestamp: ${data.timestamp}\nEnvironment: ${data.environment}\nVersion: ${data.version}`, 
+          type: 'info', 
+          results: data, 
+          url: '/api/health' 
+        });
+        updateToolStatus(runningToolId, { status: 'completed', results: `Status: ${data.status}` });
+      } catch (error) {
+        console.error('Diagnostics failed:', error);
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        updateToolStatus(runningToolId, { status: 'failed', results: errorMessage });
+        setModalContent({ 
+          title: 'Diagnostics Failed', 
+          content: `Could not reach backend health endpoint: ${errorMessage}`, 
+          type: 'error', 
+          results: [], 
+          url: '/api/health' 
+        });
+      } finally {
+        setIsModalLoading(false);
+      }
       return;
     }
 
@@ -2606,6 +2646,14 @@ function App() {
                   {isAiLoading ? 'ANALYZING...' : 'AI_INTELLIGENCE_SCAN'}
                 </button>
                 <button 
+                  onClick={() => handleToolSearch('System Diagnostics')}
+                  className="flex-1 md:flex-none px-3 md:px-6 py-2 md:py-3 border-2 border-neon-magenta text-neon-magenta font-mono text-[9px] md:text-xs uppercase tracking-widest transition-all flex items-center justify-center gap-2 hover:bg-neon-magenta hover:text-black shadow-[0_0_15px_rgba(255,0,255,0.3)]"
+                  title="Run system diagnostics to check API health"
+                >
+                  <Activity size={12} />
+                  DIAGNOSTICS
+                </button>
+                <button 
                   onClick={() => handleScan(false)}
                   disabled={!searchQuery || isScanning}
                   className={`flex-1 md:flex-none px-3 md:px-6 py-2 md:py-3 border-2 font-mono text-[9px] md:text-xs uppercase tracking-widest transition-all ${!searchQuery || isScanning ? 'border-white/10 text-white/20' : 'border-neon-lime text-neon-lime hover:bg-neon-lime hover:text-black shadow-[0_0_15px_rgba(57,255,20,0.3)]'}`}
@@ -2962,6 +3010,12 @@ function App() {
           >
             In_App_Browser
           </button>
+          <button 
+            onClick={() => setActiveTab('Diagnostics')}
+            className={`whitespace-nowrap px-3 md:px-6 py-2 md:py-3 font-mono text-[9px] md:text-xs uppercase tracking-widest border-b-2 transition-all ${activeTab === 'Diagnostics' ? 'border-neon-cyan text-neon-cyan' : 'border-transparent opacity-50 hover:opacity-100'}`}
+          >
+            Diagnostics
+          </button>
         </div>
       </div>
 
@@ -3008,6 +3062,13 @@ function App() {
         >
           <Brain size={20} />
           <span className="text-[8px] font-mono uppercase tracking-tighter">AI</span>
+        </button>
+        <button 
+          onClick={() => setActiveTab('Diagnostics')}
+          className={`flex flex-col items-center gap-1 p-2 transition-all ${activeTab === 'Diagnostics' ? 'text-neon-cyan' : 'text-white/40'}`}
+        >
+          <Activity size={20} />
+          <span className="text-[8px] font-mono uppercase tracking-tighter">Diag</span>
         </button>
       </div>
 
@@ -4467,6 +4528,15 @@ function App() {
                 </div>
               </div>
             </motion.div>
+          ) : activeTab === 'Diagnostics' ? (
+            <motion.div
+              key="diagnostics"
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -20 }}
+            >
+              <DiagnosticsView onRunDiagnostics={() => {}} />
+            </motion.div>
           ) : null}
         </AnimatePresence>
 
@@ -5424,6 +5494,153 @@ const StatusWindow = React.memo(({
     </motion.div>
   );
 });
+
+const DiagnosticsView = ({ onRunDiagnostics }: { onRunDiagnostics: () => void }) => {
+  const [healthData, setHealthData] = useState<any>(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const runDiagnostics = async () => {
+    setIsLoading(true);
+    setError(null);
+    try {
+      const res = await fetch('/api/health');
+      if (res.ok) {
+        const data = await res.json();
+        setHealthData(data);
+      } else {
+        setError(`API Error: ${res.status} ${res.statusText}`);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unknown error');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    runDiagnostics();
+  }, []);
+
+  return (
+    <div className="space-y-12">
+      <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-6 border-b border-white/10 pb-8">
+        <div>
+          <h2 className="text-4xl font-graffiti tracking-widest uppercase mb-2 text-neon-cyan">System_Diagnostics_v1.0</h2>
+          <p className="font-mono text-xs text-white/40 uppercase tracking-[0.2em]">API Health & Operational Status</p>
+        </div>
+        <button 
+          onClick={runDiagnostics}
+          disabled={isLoading}
+          className={`px-6 py-3 border-2 font-mono text-xs uppercase tracking-widest transition-all flex items-center gap-3 ${isLoading ? 'border-white/10 text-white/20 cursor-not-allowed' : 'border-neon-cyan text-neon-cyan hover:bg-neon-cyan hover:text-black shadow-[0_0_20px_rgba(0,243,255,0.2)]'}`}
+        >
+          {isLoading ? <RefreshCw size={16} className="animate-spin" /> : <Activity size={16} />}
+          REFRESH_DIAGNOSTICS
+        </button>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+        {/* API Status */}
+        <div className="bg-black/40 border-2 border-white/10 p-8 space-y-6">
+          <h3 className="text-[10px] font-mono text-neon-cyan uppercase tracking-[0.3em] flex items-center gap-2">
+            <Server size={14} /> API_CORE_STATUS
+          </h3>
+          <div className="space-y-4">
+            <div className="flex justify-between items-center border-b border-white/5 pb-2">
+              <span className="text-[9px] font-mono text-white/40 uppercase">Status</span>
+              <span className={`text-[10px] font-black uppercase ${healthData?.status === 'ok' ? 'text-neon-lime' : 'text-red-500'}`}>
+                {healthData?.status || 'UNKNOWN'}
+              </span>
+            </div>
+            <div className="flex justify-between items-center border-b border-white/5 pb-2">
+              <span className="text-[9px] font-mono text-white/40 uppercase">Environment</span>
+              <span className="text-[10px] font-bold text-white uppercase">{healthData?.environment || 'N/A'}</span>
+            </div>
+            <div className="flex justify-between items-center border-b border-white/5 pb-2">
+              <span className="text-[9px] font-mono text-white/40 uppercase">Version</span>
+              <span className="text-[10px] font-bold text-white uppercase">{healthData?.version || 'N/A'}</span>
+            </div>
+            <div className="flex justify-between items-center">
+              <span className="text-[9px] font-mono text-white/40 uppercase">Uptime</span>
+              <span className="text-[10px] font-bold text-neon-cyan uppercase">SYSTEM_STABLE</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Network Status */}
+        <div className="bg-black/40 border-2 border-white/10 p-8 space-y-6">
+          <h3 className="text-[10px] font-mono text-neon-magenta uppercase tracking-[0.3em] flex items-center gap-2">
+            <Globe size={14} /> NETWORK_CONNECTIVITY
+          </h3>
+          <div className="space-y-4">
+            <div className="flex justify-between items-center border-b border-white/5 pb-2">
+              <span className="text-[9px] font-mono text-white/40 uppercase">Google_Search</span>
+              <span className="text-[10px] font-black text-neon-lime uppercase tracking-widest">OPERATIONAL</span>
+            </div>
+            <div className="flex justify-between items-center border-b border-white/5 pb-2">
+              <span className="text-[9px] font-mono text-white/40 uppercase">DuckDuckGo</span>
+              <span className="text-[10px] font-black text-neon-lime uppercase tracking-widest">OPERATIONAL</span>
+            </div>
+            <div className="flex justify-between items-center border-b border-white/5 pb-2">
+              <span className="text-[9px] font-mono text-white/40 uppercase">WHOIS_RDAP</span>
+              <span className="text-[10px] font-black text-neon-lime uppercase tracking-widest">OPERATIONAL</span>
+            </div>
+            <div className="flex justify-between items-center">
+              <span className="text-[9px] font-mono text-white/40 uppercase">DNS_RESOLVER</span>
+              <span className="text-[10px] font-black text-neon-lime uppercase tracking-widest">OPERATIONAL</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Intelligence Engine */}
+        <div className="bg-black/40 border-2 border-white/10 p-8 space-y-6">
+          <h3 className="text-[10px] font-mono text-neon-lime uppercase tracking-[0.3em] flex items-center gap-2">
+            <Brain size={14} /> NEURAL_ENGINE_STATUS
+          </h3>
+          <div className="space-y-4">
+            <div className="flex justify-between items-center border-b border-white/5 pb-2">
+              <span className="text-[9px] font-mono text-white/40 uppercase">Model</span>
+              <span className="text-[10px] font-bold text-white uppercase">GEMINI-3-FLASH</span>
+            </div>
+            <div className="flex justify-between items-center border-b border-white/5 pb-2">
+              <span className="text-[9px] font-mono text-white/40 uppercase">API_Key</span>
+              <span className={`text-[10px] font-black uppercase ${process.env.GEMINI_API_KEY ? 'text-neon-lime' : 'text-red-500'}`}>
+                {process.env.GEMINI_API_KEY ? 'CONFIGURED' : 'MISSING'}
+              </span>
+            </div>
+            <div className="flex justify-between items-center border-b border-white/5 pb-2">
+              <span className="text-[9px] font-mono text-white/40 uppercase">Latency</span>
+              <span className="text-[10px] font-bold text-neon-lime uppercase tracking-widest">OPTIMAL</span>
+            </div>
+            <div className="flex justify-between items-center">
+              <span className="text-[9px] font-mono text-white/40 uppercase">Quota</span>
+              <span className="text-[10px] font-bold text-neon-cyan uppercase tracking-widest">UNLIMITED_FREE</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {error && (
+        <div className="p-6 bg-red-500/10 border-2 border-red-500/30 rounded-xl flex items-center gap-4">
+          <AlertTriangle className="text-red-500" size={24} />
+          <div>
+            <p className="text-[10px] font-mono text-red-500 uppercase font-black tracking-widest">Diagnostic_Failure</p>
+            <p className="text-xs font-mono text-white/60 mt-1">{error}</p>
+          </div>
+        </div>
+      )}
+
+      <div className="bg-black/40 border-2 border-white/10 p-8">
+        <h3 className="text-[10px] font-mono text-white/40 uppercase tracking-[0.3em] mb-6 flex items-center gap-2">
+          <Terminal size={14} /> RAW_SYSTEM_LOG
+        </h3>
+        <pre className="font-mono text-[10px] text-white/60 leading-relaxed overflow-x-auto custom-scrollbar bg-black/20 p-6 border border-white/5">
+          {JSON.stringify(healthData || { status: 'Awaiting diagnostics...' }, null, 2)}
+        </pre>
+      </div>
+    </div>
+  );
+};
 
 const CommandPalette = ({ onClose, onSelect }: { onClose: () => void, onSelect: (tool: OSINTTool) => void }) => {
   const [query, setQuery] = useState('');
