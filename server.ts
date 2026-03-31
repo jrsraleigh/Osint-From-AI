@@ -64,17 +64,53 @@ async function startServer() {
     const { target } = req.query;
     if (!target) return res.status(400).json({ error: 'Target required' });
     
-    let query = String(target);
+    let query = String(target).trim();
+    
+    // Remove protocol if present
+    if (query.includes('://')) {
+      try {
+        const url = new URL(query);
+        query = url.hostname;
+      } catch (e) {
+        query = query.split('://')[1].split('/')[0];
+      }
+    } else if (query.includes('/')) {
+      query = query.split('/')[0];
+    }
+
+    // Handle email addresses
     if (query.includes('@')) {
       query = query.split('@')[1];
     }
+
+    // Basic validation: must contain at least one dot and no spaces
+    if (!query.includes('.') || query.includes(' ')) {
+      return res.status(400).json({ error: 'Invalid domain for WHOIS lookup' });
+    }
+
+    // Strip common prefixes like 'www.' for better WHOIS compatibility
+    if (query.startsWith('www.')) {
+      query = query.substring(4);
+    }
     
     try {
+      // Try standard WHOIS lookup
       const results = await whois(query);
+      
+      // whois-json sometimes returns an empty object or an object with an error property
+      if (!results || Object.keys(results).length === 0 || results.error) {
+        return res.status(404).json({ error: 'No WHOIS data found' });
+      }
       res.json(results);
-    } catch (error) {
+    } catch (error: any) {
       console.error('WHOIS error:', error);
-      res.status(500).json({ error: 'WHOIS lookup failed' });
+      
+      // Handle specific "no whois server known" error
+      if (error.message && (error.message.includes('no whois server is known') || error.message.includes('lookup:'))) {
+        return res.status(422).json({ error: `No WHOIS server known for TLD: .${query.split('.').pop()}` });
+      }
+      
+      res.status(500).json({ error: 'WHOIS lookup failed. The TLD might not be supported by the local WHOIS client.' });
     }
   });
 
@@ -168,21 +204,100 @@ async function startServer() {
     ];
     
     const isDork = query.includes('site:') || query.includes('filetype:') || query.includes('intitle:') || query.includes('inurl:');
+    
+    // Handle extremely long queries by chunking them
+    // Google limit is ~32 words, and URL limit is ~2000 chars
+    if (query.length > 800 && (query.includes('OR') || query.includes('site:'))) {
+      // Try to extract the base query (e.g., "username") and the dork parts
+      let baseQuery = '';
+      let dorkPart = query;
+      
+      if (query.includes('(') && query.includes(')')) {
+        const firstParen = query.indexOf('(');
+        const lastParen = query.lastIndexOf(')');
+        baseQuery = query.substring(0, firstParen).trim();
+        dorkPart = query.substring(firstParen + 1, lastParen).trim();
+      } else if (query.includes('site:')) {
+        // If no parens but has site:, try to find the part before site:
+        const firstSite = query.indexOf('site:');
+        baseQuery = query.substring(0, firstSite).trim();
+        dorkPart = query.substring(firstSite).trim();
+      }
+
+      const parts = dorkPart.split(/ OR | \+OR\+ | \+OR | OR\+ | \| /i).filter(p => p.trim().length > 0);
+      
+      if (parts.length > 3) {
+        console.log(`Chunking long query (${query.length} chars, ${parts.length} parts)`);
+        const chunks: string[] = [];
+        let currentChunk: string[] = [];
+        let currentLen = baseQuery.length;
+        
+        // Google allows up to 32 words. site:example.com counts as 1 word.
+        // We'll use 15 to be safe and keep URL length reasonable.
+        for (const part of parts) {
+          const partStr = part.trim();
+          if ((currentLen + partStr.length + 4) > 1500 || currentChunk.length >= 15) {
+            if (currentChunk.length > 0) {
+              const chunkQuery = baseQuery ? `${baseQuery} (${currentChunk.join(' OR ')})` : currentChunk.join(' OR ');
+              chunks.push(chunkQuery);
+            }
+            currentChunk = [partStr];
+            currentLen = baseQuery.length + partStr.length;
+          } else {
+            currentChunk.push(partStr);
+            currentLen += partStr.length + 4;
+          }
+        }
+        if (currentChunk.length > 0) {
+          const chunkQuery = baseQuery ? `${baseQuery} (${currentChunk.join(' OR ')})` : currentChunk.join(' OR ');
+          chunks.push(chunkQuery);
+        }
+        
+        console.log(`Split into ${chunks.length} chunks`);
+        const allResults: any[] = [];
+        
+        // Process chunks in parallel but with a small limit to avoid being blocked
+        const chunkLimit = pLimit(3);
+        const chunkPromises = chunks.slice(0, 20).map(chunk => 
+          chunkLimit(async () => {
+            try {
+              // Add a small delay between chunk starts to avoid simultaneous bursts
+              await sleep(Math.random() * 2000);
+              const chunkResults = await scrapeSearchEngines(chunk);
+              return chunkResults;
+            } catch (err) {
+              console.error('Chunk search failed, continuing...', err);
+              return [];
+            }
+          })
+        );
+
+        const chunkResultsArray = await Promise.all(chunkPromises);
+        allResults.push(...chunkResultsArray.flat());
+        
+        // Deduplicate by link
+        const uniqueResults = Array.from(new Map(allResults.map(r => [r.link, r])).values());
+        console.log(`Total unique results from chunks: ${uniqueResults.length}`);
+        return uniqueResults;
+      }
+    }
+
     const results: any[] = [];
 
     // Try Google first
     try {
-      await sleep(Math.random() * 1000 + 500); // Add jitter/delay
-      const googleUrl = `https://www.google.com/search?q=${encodeURIComponent(query)}&num=20`;
+      await sleep(Math.random() * 2000 + 1000); // Add jitter/delay
+      const googleUrl = `https://www.google.com/search?q=${encodeURIComponent(query)}&num=30`;
       const response = await axios.get(googleUrl, {
         headers: {
           'User-Agent': userAgents[Math.floor(Math.random() * userAgents.length)],
           'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
           'Accept-Language': 'en-US,en;q=0.5',
           'Connection': 'keep-alive',
-          'Upgrade-Insecure-Requests': '1'
+          'Upgrade-Insecure-Requests': '1',
+          'Cache-Control': 'max-age=0'
         },
-        timeout: 10000
+        timeout: 15000
       });
       
       const $ = cheerio.load(response.data);
@@ -249,6 +364,29 @@ async function startServer() {
         });
       } catch (e: any) {
         console.error('Bing fallback failed:', e.message);
+      }
+    }
+
+    // Final fallback to Yahoo if still no results
+    if (results.length === 0) {
+      try {
+        await sleep(Math.random() * 1000 + 500);
+        const yahooUrl = `https://search.yahoo.com/search?p=${encodeURIComponent(query)}`;
+        const yahooResponse = await axios.get(yahooUrl, {
+          headers: { 'User-Agent': userAgents[2] },
+          timeout: 8000
+        });
+        const $yahoo = cheerio.load(yahooResponse.data);
+        $yahoo('.algo-sr').each((i, el) => {
+          const title = $yahoo(el).find('h3').text().trim();
+          const link = $yahoo(el).find('a').first().attr('href');
+          const snippet = $yahoo(el).find('.compText').text().trim();
+          if (title && link && !results.find(r => r.link === link)) {
+            results.push({ title, link, snippet, source: 'Yahoo' });
+          }
+        });
+      } catch (e: any) {
+        console.error('Yahoo fallback failed:', e.message);
       }
     }
 
@@ -331,6 +469,10 @@ async function startServer() {
         timeout: 15000,
         validateStatus: () => true
       });
+      
+      if (!response.data || typeof response.data !== 'string') {
+        return res.status(500).json({ error: 'Received invalid data from target URL' });
+      }
       
       const $ = cheerio.load(response.data);
       const results: any[] = [];

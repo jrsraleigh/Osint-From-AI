@@ -830,7 +830,7 @@ function App() {
       }
     }
   }, [debouncedSearchQuery, activeTab]);
-  const [modalContent, setModalContent] = useState<{ title: string; content: string; type: 'article' | 'search' | 'tool'; results?: any[]; url?: string } | null>(null);
+  const [modalContent, setModalContent] = useState<{ title: string; content: string; type: 'article' | 'search' | 'tool' | 'error'; results?: any[]; url?: string } | null>(null);
   const [isModalLoading, setIsModalLoading] = useState(false);
   const [copiedUrl, setCopiedUrl] = useState<string | null>(null);
   const [isVisualScanning, setIsVisualScanning] = useState(false);
@@ -1478,10 +1478,34 @@ function App() {
     setRunningTools(prev => [newTool, ...prev].slice(0, 20));
     setShowStatusWindow(true);
     
-    // Simulate some logs
-    setTimeout(() => {
-      updateToolStatus(id, { logs: [...newTool.logs, 'Handshaking with remote server...', 'Bypassing rate limits...'], progress: 30 });
-    }, 1000);
+    // Start progress interval
+    const progressInterval = setInterval(() => {
+      setRunningTools(prev => {
+        const tool = prev.find(t => t.id === id);
+        if (!tool || tool.status !== 'running') {
+          clearInterval(progressInterval);
+          return prev;
+        }
+        
+        const updates: any = {};
+        if (tool.progress < 95) {
+          // Faster progress initially, then slower but still steady
+          const increment = tool.progress < 30 ? 10 : (tool.progress < 60 ? 5 : Math.random() * 3 + 1);
+          updates.progress = Math.min(95, tool.progress + increment);
+        }
+        
+        if (tool.progress >= 10 && tool.logs.length === 2) {
+          updates.logs = [...tool.logs, 'Handshaking with remote server...', 'Bypassing rate limits...'];
+        } else if (tool.progress >= 60 && tool.logs.length === 4) {
+          updates.logs = [...tool.logs, 'Awaiting server response...', 'Parsing data streams...'];
+        }
+
+        if (Object.keys(updates).length > 0) {
+          return prev.map(t => t.id === id ? { ...t, ...updates } : t);
+        }
+        return prev;
+      });
+    }, 1500);
 
     return id;
   };
@@ -1561,7 +1585,9 @@ function App() {
             updateToolStatus(runningToolId, { status: 'completed', results: `Found ${Array.isArray(data) ? data.length : Object.keys(data).length} data points` });
             return data;
           }
-          updateToolStatus(runningToolId, { status: 'failed', results: 'API Error' });
+          const errorData = await res.json().catch(() => ({}));
+          const errorMessage = errorData.error || `API Error (${res.status})`;
+          updateToolStatus(runningToolId, { status: 'failed', results: errorMessage });
           return null;
         } catch (e) {
           updateToolStatus(runningToolId, { status: 'failed', results: e instanceof Error ? e.message : 'Unknown error' });
@@ -1621,21 +1647,11 @@ function App() {
   const runTool = async (name: string, api: string, toolId?: string, category?: string) => {
     const runningToolId = addRunningTool(name, 'scan', category || 'General');
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 60000); // 60s timeout
+    const timeoutId = setTimeout(() => controller.abort(), 300000); // Increased to 5 minutes for deep scans and dorks
     
-    const progressInterval = setInterval(() => {
-      setRunningTools(prev => prev.map(t => {
-        if (t.id === runningToolId && t.status === 'running' && t.progress < 90) {
-          return { ...t, progress: Math.min(95, t.progress + Math.random() * 2) };
-        }
-        return t;
-      }));
-    }, 1500);
-
     try {
       const res = await fetch(api, { signal: controller.signal });
       clearTimeout(timeoutId);
-      clearInterval(progressInterval);
       
       if (res.ok) {
         const data = await res.json();
@@ -1664,11 +1680,19 @@ function App() {
         
         return data;
       }
-      updateToolStatus(runningToolId, { status: 'failed', progress: 100, results: 'API Error' });
-      return null;
+          const errorData = await res.json().catch(() => ({}));
+          const errorMessage = errorData.error || `API Error (${res.status})`;
+          
+          // Special handling for WHOIS "no server known" to make it more user-friendly
+          let finalError = errorMessage;
+          if (errorMessage.includes('no whois server is known')) {
+            finalError = 'No WHOIS server found for this TLD. Try a different domain extension.';
+          }
+          
+          updateToolStatus(runningToolId, { status: 'failed', progress: 100, results: finalError });
+          return null;
     } catch (e) {
       clearTimeout(timeoutId);
-      clearInterval(progressInterval);
       const errorMessage = e instanceof Error && e.name === 'AbortError' ? 'Request timed out' : e instanceof Error ? e.message : 'Unknown error';
       updateToolStatus(runningToolId, { status: 'failed', progress: 100, results: errorMessage });
       return null;
@@ -1815,12 +1839,36 @@ function App() {
             setModalContent({ title: `${name} Results`, content: '', type: 'search', results: data, url });
             updateToolStatus(runningToolId, { status: 'completed', results: `Found ${data.length} results` });
           } else {
-            updateToolStatus(runningToolId, { status: 'failed', results: 'API Error' });
+            const errorData = await res.json().catch(() => ({}));
+            const errorMessage = errorData.error || `API Error (${res.status})`;
+            throw new Error(errorMessage);
           }
         } catch (error) {
           console.error('Tool search failed:', error);
-          updateToolStatus(runningToolId, { status: 'failed', results: error instanceof Error ? error.message : 'Unknown error' });
-          window.open(url, '_blank');
+          const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+          updateToolStatus(runningToolId, { status: 'failed', results: errorMessage });
+          
+          // Fallback to window.open but truncate if too long to avoid Google rejection
+          let fallbackUrl = url;
+          if (url.length > 1500) {
+            // If too long, just open a basic search for the target
+            fallbackUrl = `https://www.google.com/search?q=${encodeURIComponent(searchQuery)}`;
+          }
+          
+          // Inform user about pop-up
+          setModalContent({ 
+            title: 'Search Failed', 
+            content: `Internal search failed: ${errorMessage}. Opening direct search in new tab...`, 
+            type: 'error', 
+            results: [], 
+            url: fallbackUrl 
+          });
+          
+          // Try to open, but browser might block it
+          const win = window.open(fallbackUrl, '_blank');
+          if (!win) {
+            alert('Pop-up blocked! Please allow pop-ups for this site to view direct search results.');
+          }
         } finally {
           setIsModalLoading(false);
         }
@@ -1852,6 +1900,24 @@ function App() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
+  const extractJson = (text: string) => {
+    try {
+      // Try direct parse first
+      return JSON.parse(text);
+    } catch (e) {
+      // Try to find JSON block
+      const jsonMatch = text.match(/\[[\s\S]*\]|\{[\s\S]*\}/);
+      if (jsonMatch) {
+        try {
+          return JSON.parse(jsonMatch[0]);
+        } catch (e2) {
+          console.error('Failed to parse extracted JSON:', e2);
+        }
+      }
+      return null;
+    }
+  };
+
   const generateDorks = async () => {
     if (!searchQuery) return;
     setIsGeneratingDorks(true);
@@ -1859,14 +1925,18 @@ function App() {
     try {
       const prompt = `Generate a list of 10 highly effective Google Dorks for the target: "${searchQuery}". 
         The OSINT objectives are: "${dorkObjectives || 'General reconnaissance, finding sensitive files, and discovering subdomains'}".
-        Return the response as a JSON array of objects, each with "query", "description", and "category" fields.
+        Return ONLY a JSON array of objects, each with "query", "description", and "category" fields.
         Categories should be things like "Sensitive Files", "Login Pages", "Subdomains", "Directory Listing", etc.`;
       
       const response = await generateAiContent(prompt);
+      const dorks = extractJson(response.text);
       
-      const dorks = JSON.parse(response.text);
-      setGeneratedDorks(dorks);
-      updateToolStatus(runningToolId, { status: 'completed', results: `Generated ${dorks.length} dorks` });
+      if (dorks && Array.isArray(dorks)) {
+        setGeneratedDorks(dorks);
+        updateToolStatus(runningToolId, { status: 'completed', results: `Generated ${dorks.length} dorks` });
+      } else {
+        throw new Error('AI returned invalid data format. Try again.');
+      }
     } catch (error) {
       console.error('Error generating dorks:', error);
       updateToolStatus(runningToolId, { status: 'failed', results: error instanceof Error ? error.message : 'Unknown error' });
