@@ -32,8 +32,9 @@ async function startServer() {
     try {
       const feedPromises = feeds.map(async (f) => {
         try {
-          const feed = await parser.parseURL(f.url);
-          return feed.items.map(item => ({
+          const feed = await axios.get(f.url, { timeout: 10000 });
+          const parsed = await parser.parseString(feed.data);
+          return parsed.items.map(item => ({
             ...item,
             source: f.name,
             sourceUrl: f.url
@@ -94,8 +95,11 @@ async function startServer() {
     }
     
     try {
-      // Try standard WHOIS lookup
-      const results = await whois(query);
+      // Try standard WHOIS lookup with timeout
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('WHOIS lookup timed out')), 15000)
+      );
+      const results = await Promise.race([whois(query), timeoutPromise]) as any;
       
       // whois-json sometimes returns an empty object or an object with an error property
       if (!results || Object.keys(results).length === 0 || results.error) {
@@ -106,8 +110,8 @@ async function startServer() {
       console.error('WHOIS error:', error);
       
       // Handle specific "no whois server known" error
-      if (error.message && (error.message.includes('no whois server is known') || error.message.includes('lookup:'))) {
-        return res.status(422).json({ error: `No WHOIS server known for TLD: .${query.split('.').pop()}` });
+      if (error.message && (error.message.includes('no whois server is known') || error.message.includes('lookup:') || error.message.includes('timed out'))) {
+        return res.status(422).json({ error: error.message || `No WHOIS server known for TLD: .${query.split('.').pop()}` });
       }
       
       res.status(500).json({ error: 'WHOIS lookup failed. The TLD might not be supported by the local WHOIS client.' });
@@ -117,13 +121,24 @@ async function startServer() {
   app.get('/api/osint/dns', async (req, res) => {
     const { target } = req.query;
     if (!target) return res.status(400).json({ error: 'Target required' });
-    try {
+    
+    const resolvePromise = new Promise((resolve, reject) => {
       dns.resolveAny(target as string, (err, addresses) => {
-        if (err) return res.status(500).json({ error: 'DNS lookup failed' });
-        res.json(addresses);
+        if (err) reject(err);
+        else resolve(addresses);
       });
-    } catch (error) {
-      res.status(500).json({ error: 'DNS lookup failed' });
+    });
+
+    const timeoutPromise = new Promise((_, reject) => 
+      setTimeout(() => reject(new Error('DNS lookup timed out')), 10000)
+    );
+
+    try {
+      const addresses = await Promise.race([resolvePromise, timeoutPromise]);
+      res.json(addresses);
+    } catch (error: any) {
+      console.error('DNS error:', error);
+      res.status(500).json({ error: error.message || 'DNS lookup failed' });
     }
   });
 
@@ -187,11 +202,15 @@ async function startServer() {
   });
 
   const searchLimit = pLimit(2); // Very low concurrency for search engines to avoid blocks
-  const socialLimit = pLimit(5); // Lower concurrency for social scans
+  const socialLimit = pLimit(20); // Increased concurrency for social scans
   
   const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
-  async function scrapeSearchEngines(query: string) {
+  async function scrapeSearchEngines(query: string, depth = 0) {
+    if (depth > 5) {
+      console.log('Max search depth reached for query:', query);
+      return [];
+    }
     const userAgents = [
       'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
       'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
@@ -256,14 +275,14 @@ async function startServer() {
         console.log(`Split into ${chunks.length} chunks`);
         const allResults: any[] = [];
         
-        // Process chunks in parallel but with a small limit to avoid being blocked
-        const chunkLimit = pLimit(3);
+        // Process chunks in parallel with a higher limit
+        const chunkLimit = pLimit(5);
         const chunkPromises = chunks.slice(0, 20).map(chunk => 
           chunkLimit(async () => {
             try {
-              // Add a small delay between chunk starts to avoid simultaneous bursts
-              await sleep(Math.random() * 2000);
-              const chunkResults = await scrapeSearchEngines(chunk);
+              // Add a smaller jittered delay
+              await sleep(Math.random() * 1000 + 200);
+              const chunkResults = await scrapeSearchEngines(chunk, depth + 1);
               return chunkResults;
             } catch (err) {
               console.error('Chunk search failed, continuing...', err);
@@ -286,7 +305,7 @@ async function startServer() {
 
     // Try Google first
     try {
-      await sleep(Math.random() * 2000 + 1000); // Add jitter/delay
+      await sleep(Math.random() * 500 + 200); // Reduced jitter
       const googleUrl = `https://www.google.com/search?q=${encodeURIComponent(query)}&num=30`;
       const response = await axios.get(googleUrl, {
         headers: {
@@ -321,7 +340,7 @@ async function startServer() {
     // If Google fails or returns no results, try DuckDuckGo
     if (results.length === 0) {
       try {
-        await sleep(Math.random() * 1000 + 500); // Add jitter/delay
+        await sleep(Math.random() * 300 + 100); // Reduced jitter
         const ddgUrl = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
         const ddgResponse = await axios.get(ddgUrl, {
           headers: { 'User-Agent': userAgents[0] },
@@ -393,8 +412,8 @@ async function startServer() {
     return results;
   }
 
-  app.get('/api/osint/search', async (req, res) => {
-    const { q } = req.query;
+  const handleSearch = async (req: any, res: any) => {
+    const q = req.query.q || req.body.q;
     if (!q) return res.status(400).json({ error: 'Query required' });
     
     try {
@@ -404,7 +423,10 @@ async function startServer() {
       console.error('Search error:', error);
       res.status(500).json({ error: 'Search failed' });
     }
-  });
+  };
+
+  app.get('/api/osint/search', handleSearch);
+  app.post('/api/osint/search', handleSearch);
 
   app.get('/api/osint/article', async (req, res) => {
     const { url } = req.query;
@@ -1544,7 +1566,14 @@ async function startServer() {
       }
     }
 
-    const results = await Promise.all(sites.map((site) => socialLimit(async () => {
+    // Add a global timeout for the social scan to prevent hangs (4 minutes)
+    const socialScanTimeout = new Promise((_, reject) => 
+      setTimeout(() => reject(new Error('Social scan timed out')), 240000)
+    );
+
+    try {
+      const results = await Promise.race([
+        Promise.all(sites.map((site) => socialLimit(async () => {
       try {
         await sleep(Math.random() * 500); // Small jitter
         const response = await axios.get(site.url, { 
@@ -1766,9 +1795,15 @@ async function startServer() {
       } catch (error) {
         return { name: site.name, url: site.url, category: site.category, status: 'Error' };
       }
-    })));
+        }))),
+        socialScanTimeout
+      ]) as any[];
 
-    res.json(results);
+      res.json(results.filter(r => r.status === 'Found'));
+    } catch (error) {
+      console.error('Social scan failed or timed out:', error);
+      res.status(504).json({ error: 'Social scan timed out' });
+    }
   });
 
   // Vite middleware for development

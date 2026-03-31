@@ -90,6 +90,7 @@ interface IntelligenceWindowProps {
   searchQuery: string;
   aiSuggestions: {name: string, reason: string, directLink?: string}[];
   aiActions: string[];
+  openInBrowser: (url: string) => void;
 }
 
 interface StatusWindowProps {
@@ -952,6 +953,14 @@ function App() {
     setTimeout(() => setCopiedUrl(null), 2000);
   };
 
+  const openInBrowser = (url: string) => {
+    setBrowserUrl(url);
+    setBrowserHistory(prev => [url, ...prev].slice(0, 50));
+    setActiveTab('Browser');
+    setModalContent(null);
+    setSelectedToolForModal(null);
+  };
+
   const handleBulkExport = () => {
     const selectedTools = OSINT_TOOLS.filter(t => selectedToolIds.has(t.id));
     const data = JSON.stringify(selectedTools, null, 2);
@@ -970,7 +979,11 @@ function App() {
     const runningToolId = addRunningTool('ADVANCED_DORK_SEARCH', 'search', 'Dorks');
     
     try {
-      const res = await fetch(`/api/osint/search?q=${encodeURIComponent(advancedDork)}`);
+      const res = await fetch('/api/osint/search', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ q: advancedDork })
+      });
       if (res.ok) {
         const data = await res.json();
         setModalContent({ title: 'Google Dork Search', content: '', type: 'search', results: data });
@@ -1017,7 +1030,10 @@ function App() {
     } catch (error) {
       console.error(`${toolName} query failed:`, error);
       updateToolStatus(runningToolId, { status: 'failed', results: error instanceof Error ? error.message : 'Unknown error' });
-      window.open(url, '_blank');
+      // Switch to browser tab instead of window.open
+      setBrowserUrl(url);
+      setBrowserHistory(prev => [url, ...prev].slice(0, 50));
+      setActiveTab('Browser');
     } finally {
       setIsModalLoading(false);
     }
@@ -1039,8 +1055,10 @@ function App() {
     } catch (error) {
       console.error('Failed to fetch article:', error);
       updateToolStatus(runningToolId, { status: 'failed', results: error instanceof Error ? error.message : 'Unknown error' });
-      // Fallback to opening in new tab if fetch fails
-      window.open(item.link, '_blank');
+      // Fallback to browser tab instead of window.open
+      setBrowserUrl(item.link);
+      setBrowserHistory(prev => [item.link, ...prev].slice(0, 50));
+      setActiveTab('Browser');
     } finally {
       setIsModalLoading(false);
     }
@@ -1490,14 +1508,29 @@ function App() {
         const updates: any = {};
         if (tool.progress < 95) {
           // Faster progress initially, then slower but still steady
-          const increment = tool.progress < 30 ? 10 : (tool.progress < 60 ? 5 : Math.random() * 3 + 1);
+          const increment = tool.progress < 30 ? 10 : (tool.progress < 60 ? 5 : Math.random() * 2 + 0.5);
           updates.progress = Math.min(95, tool.progress + increment);
+        } else if (tool.progress < 99.8) {
+          // Very slow progress after 95% to avoid appearing stuck
+          updates.progress = tool.progress + (Math.random() * 0.05 + 0.01);
         }
         
         if (tool.progress >= 10 && tool.logs.length === 2) {
           updates.logs = [...tool.logs, 'Handshaking with remote server...', 'Bypassing rate limits...'];
         } else if (tool.progress >= 60 && tool.logs.length === 4) {
           updates.logs = [...tool.logs, 'Awaiting server response...', 'Parsing data streams...'];
+        } else if (tool.progress >= 95 && Math.random() > 0.95 && tool.logs.length < 12) {
+          const patienceLogs = [
+            'Still processing large dataset...',
+            'Deep scanning in progress...',
+            'Awaiting final results from remote nodes...',
+            'Aggregating findings...',
+            'Please wait, this may take a few minutes...'
+          ];
+          const nextLog = patienceLogs[Math.floor(Math.random() * patienceLogs.length)];
+          if (!tool.logs.includes(nextLog)) {
+            updates.logs = [...tool.logs, nextLog];
+          }
         }
 
         if (Object.keys(updates).length > 0) {
@@ -1644,17 +1677,40 @@ function App() {
     }
   };
 
-  const runTool = async (name: string, api: string, toolId?: string, category?: string) => {
+  const runTool = async (name: string, api: string, toolId?: string, category?: string, body?: any) => {
     const runningToolId = addRunningTool(name, 'scan', category || 'General');
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 300000); // Increased to 5 minutes for deep scans and dorks
+    const timeoutId = setTimeout(() => controller.abort(), 600000); // Increased to 10 minutes for deep scans
     
     try {
-      const res = await fetch(api, { signal: controller.signal });
-      clearTimeout(timeoutId);
+      let finalApi = api;
+      let finalBody = body;
+
+      // Automatically switch to POST for long search queries to avoid 414 URI Too Long
+      if (!finalBody && api.includes('/api/osint/search?q=')) {
+        try {
+          const urlObj = new URL(api, window.location.origin);
+          const q = urlObj.searchParams.get('q');
+          if (q && (api.length > 1000 || q.length > 500)) {
+            finalApi = '/api/osint/search';
+            finalBody = { q };
+          }
+        } catch (e) {
+          // Fallback to GET if URL parsing fails
+        }
+      }
+
+      const fetchOptions: RequestInit = { signal: controller.signal };
+      if (finalBody) {
+        fetchOptions.method = 'POST';
+        fetchOptions.headers = { 'Content-Type': 'application/json' };
+        fetchOptions.body = JSON.stringify(finalBody);
+      }
+      const res = await fetch(finalApi, fetchOptions);
       
       if (res.ok) {
         const data = await res.json();
+        clearTimeout(timeoutId);
         const isSocial = name.includes('SOCIAL') || name.includes('PRESENCE');
         const hits = isSocial && Array.isArray(data) ? data.filter((s: any) => s.status === 'Found' || s.status === 'Possible but Deleted') : [];
         
@@ -1794,9 +1850,11 @@ function App() {
 
     if (!url) return;
 
-    // If no search query, just open the tool URL in a new tab
+    // If no search query, just open the tool URL in the browser tab
     if (!searchQuery) {
-      window.open(url, '_blank');
+      setBrowserUrl(url);
+      setBrowserHistory(prev => [url, ...prev].slice(0, 50));
+      setActiveTab('Browser');
       return;
     }
 
@@ -1833,7 +1891,11 @@ function App() {
         setModalContent({ title: `${name} Results`, content: '', type: 'search', results: [], url });
         const runningToolId = addRunningTool(name, 'search', typeof toolOrName !== 'string' ? toolOrName.category : 'General');
         try {
-          const res = await fetch(`/api/osint/search?q=${encodeURIComponent(q)}`);
+          const res = await fetch('/api/osint/search', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ q })
+          });
           if (res.ok) {
             const data = await res.json();
             setModalContent({ title: `${name} Results`, content: '', type: 'search', results: data, url });
@@ -1848,27 +1910,14 @@ function App() {
           const errorMessage = error instanceof Error ? error.message : 'Unknown error';
           updateToolStatus(runningToolId, { status: 'failed', results: errorMessage });
           
-          // Fallback to window.open but truncate if too long to avoid Google rejection
-          let fallbackUrl = url;
-          if (url.length > 1500) {
-            // If too long, just open a basic search for the target
-            fallbackUrl = `https://www.google.com/search?q=${encodeURIComponent(searchQuery)}`;
-          }
-          
-          // Inform user about pop-up
+          // Inform user about failure without automatic redirect
           setModalContent({ 
             title: 'Search Failed', 
-            content: `Internal search failed: ${errorMessage}. Opening direct search in new tab...`, 
+            content: `Internal search failed: ${errorMessage}. You can try accessing the source directly via the browser tab or proxy mode.`, 
             type: 'error', 
             results: [], 
-            url: fallbackUrl 
+            url: url 
           });
-          
-          // Try to open, but browser might block it
-          const win = window.open(fallbackUrl, '_blank');
-          if (!win) {
-            alert('Pop-up blocked! Please allow pop-ups for this site to view direct search results.');
-          }
         } finally {
           setIsModalLoading(false);
         }
@@ -2069,7 +2118,11 @@ function App() {
         if (url.includes('google.com/search')) {
           const q = new URL(url).searchParams.get('q');
           if (q) {
-            const res = await fetch(`/api/osint/search?q=${encodeURIComponent(q)}`);
+            const res = await fetch('/api/osint/search', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ q })
+            });
             if (res.ok) {
               results = await res.json();
               updateToolStatus(runningToolId, { status: 'completed', results: `Found ${results.length} results` });
@@ -2090,7 +2143,10 @@ function App() {
       } catch (error) {
         console.error(`Tool ${tool.name} failed:`, error);
         updateToolStatus(runningToolId, { status: 'failed', results: error instanceof Error ? error.message : 'Unknown error' });
-        window.open(url, '_blank');
+        // Switch to browser tab instead of window.open
+        setBrowserUrl(url);
+        setBrowserHistory(prev => [url, ...prev].slice(0, 50));
+        setActiveTab('Browser');
       } finally {
         setIsModalLoading(false);
         setCurrentlyRunningToolId(null);
@@ -3119,14 +3175,12 @@ function App() {
                           {tool.aiReason}
                         </p>
                         {tool.aiDirectLink && (
-                          <a 
-                            href={tool.aiDirectLink}
-                            target="_blank"
-                            rel="noreferrer"
+                          <button 
+                            onClick={() => openInBrowser(tool.aiDirectLink)}
                             className="mt-3 inline-flex items-center gap-2 text-[10px] text-neon-cyan hover:text-white transition-colors border-b border-neon-cyan/30"
                           >
                             <ExternalLink size={10} /> ACCESS_TOOL_DIRECTLY
-                          </a>
+                          </button>
                         )}
                       </div>
                     )}
@@ -3424,13 +3478,6 @@ function App() {
                     className={`px-3 py-1 border text-[10px] uppercase tracking-widest transition-all ${browserProxyMode ? 'bg-neon-magenta border-neon-magenta text-black' : 'border-white/20 text-white/40 hover:border-white/40'}`}
                   >
                     Proxy_Mode
-                  </button>
-                  <button 
-                    onClick={() => window.open(browserUrl, '_blank')}
-                    className="p-2 hover:bg-white/10 rounded transition-all text-neon-cyan"
-                    title="Open in external browser"
-                  >
-                    <ExternalLink size={16} />
                   </button>
                 </div>
               </div>
@@ -4188,14 +4235,12 @@ function App() {
                               <div className="flex items-start justify-between mb-4">
                                 <h4 className="text-sm font-mono text-neon-yellow uppercase tracking-widest">{suggestion.name}</h4>
                                 {suggestion.directLink && (
-                                  <a 
-                                    href={suggestion.directLink} 
-                                    target="_blank" 
-                                    rel="noopener noreferrer"
+                                  <button 
+                                    onClick={() => openInBrowser(suggestion.directLink)}
                                     className="p-1.5 bg-neon-yellow/10 border border-neon-yellow/20 text-neon-yellow hover:bg-neon-yellow hover:text-black transition-all rounded"
                                   >
                                     <ExternalLink size={12} />
-                                  </a>
+                                  </button>
                                 )}
                               </div>
                               <p className="text-[10px] font-mono text-white/60 leading-relaxed uppercase">
@@ -4652,14 +4697,12 @@ function App() {
                         />
                         {modalContent.url && (
                           <div className="mt-10 pt-10 border-t border-white/10">
-                            <a 
-                              href={modalContent.url} 
-                              target="_blank" 
-                              rel="noreferrer"
+                            <button 
+                              onClick={() => openInBrowser(modalContent.url)}
                               className="inline-flex items-center gap-3 text-xs text-neon-cyan hover:text-white transition-colors"
                             >
                               <ExternalLink size={14} /> VIEW_ORIGINAL_SOURCE_REPORT
-                            </a>
+                            </button>
                           </div>
                         )}
                       </div>
@@ -4673,14 +4716,12 @@ function App() {
                               <h4 className="text-neon-cyan font-bold mb-2 group-hover:text-white transition-colors">{res.title}</h4>
                               <p className="text-xs text-white/60 mb-4 line-clamp-2">{res.snippet}</p>
                               <div className="flex items-center justify-between gap-4">
-                                <a 
-                                  href={res.link} 
-                                  target="_blank" 
-                                  rel="noreferrer"
+                                <button 
+                                  onClick={() => openInBrowser(res.link)}
                                   className="text-[10px] text-white/40 hover:text-neon-cyan transition-colors flex items-center gap-2 truncate"
                                 >
                                   <LinkIcon size={10} /> {res.link}
-                                </a>
+                                </button>
                                 <button
                                   onClick={() => handleCopy(res.link)}
                                   className="flex items-center gap-2 px-3 py-1 bg-white/5 border border-white/10 text-[9px] text-white/60 hover:bg-white/10 hover:text-white transition-all rounded shrink-0"
@@ -4708,14 +4749,12 @@ function App() {
                         )}
                         {modalContent.url && (
                           <div className="mt-10 pt-10 border-t border-white/10">
-                            <a 
-                              href={modalContent.url} 
-                              target="_blank" 
-                              rel="noreferrer"
+                            <button 
+                              onClick={() => openInBrowser(modalContent.url)}
                               className="inline-flex items-center gap-3 text-xs text-neon-cyan hover:text-white transition-colors"
                             >
                               <ExternalLink size={14} /> VIEW_ORIGINAL_SOURCE_REPORT
-                            </a>
+                            </button>
                           </div>
                         )}
                       </div>
@@ -4729,14 +4768,12 @@ function App() {
                               <h4 className="text-neon-magenta font-bold mb-2 group-hover:text-white transition-colors">{res.title}</h4>
                               <p className="text-xs text-white/60 mb-4 line-clamp-2">{res.snippet}</p>
                               <div className="flex items-center justify-between gap-4">
-                                <a 
-                                  href={res.link} 
-                                  target="_blank" 
-                                  rel="noreferrer"
+                                <button 
+                                  onClick={() => openInBrowser(res.link)}
                                   className="text-[10px] text-white/40 hover:text-neon-magenta transition-colors flex items-center gap-2 truncate"
                                 >
                                   <LinkIcon size={10} /> {res.link}
-                                </a>
+                                </button>
                                 <button
                                   onClick={() => handleCopy(res.link)}
                                   className="flex items-center gap-2 px-3 py-1 bg-white/5 border border-white/10 text-[9px] text-white/60 hover:bg-white/10 hover:text-white transition-all rounded shrink-0"
@@ -4764,14 +4801,12 @@ function App() {
                         )}
                         {modalContent.url && (
                           <div className="mt-10 pt-10 border-t border-white/10">
-                            <a 
-                              href={modalContent.url} 
-                              target="_blank" 
-                              rel="noreferrer"
+                            <button 
+                              onClick={() => openInBrowser(modalContent.url)}
                               className="inline-flex items-center gap-3 text-xs text-neon-magenta hover:text-white transition-colors"
                             >
                               <ExternalLink size={14} /> VIEW_ORIGINAL_SOURCE_REPORT
-                            </a>
+                            </button>
                           </div>
                         )}
                       </div>
@@ -4856,6 +4891,7 @@ function App() {
         searchQuery={searchQuery}
         aiSuggestions={aiSuggestions}
         aiActions={aiActions}
+        openInBrowser={openInBrowser}
       />
       </div>
     </ErrorBoundary>
@@ -4878,7 +4914,8 @@ const IntelligenceWindow = React.memo(({
   onDownloadLog,
   searchQuery,
   aiSuggestions,
-  aiActions
+  aiActions,
+  openInBrowser
 }: IntelligenceWindowProps) => {
   if (!isOpen) return null;
 
@@ -5002,14 +5039,12 @@ const IntelligenceWindow = React.memo(({
                         <div className="flex items-start justify-between mb-2">
                           <h4 className="text-[10px] font-mono text-neon-yellow uppercase tracking-widest">{suggestion.name}</h4>
                           {suggestion.directLink && (
-                            <a 
-                              href={suggestion.directLink} 
-                              target="_blank" 
-                              rel="noopener noreferrer"
+                            <button 
+                              onClick={() => openInBrowser(suggestion.directLink)}
                               className="p-1 bg-neon-yellow/10 border border-neon-yellow/20 text-neon-yellow hover:bg-neon-yellow hover:text-black transition-all rounded"
                             >
                               <ExternalLink size={10} />
-                            </a>
+                            </button>
                           )}
                         </div>
                         <p className="text-[9px] font-mono text-white/60 leading-relaxed uppercase">
