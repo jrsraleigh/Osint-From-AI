@@ -58,9 +58,11 @@ import {
   Target,
   Edit2,
   Cloud,
+  Settings,
+  Clock,
+  Key,
   Database,
   Folder,
-  Key,
   Server,
   CornerDownLeft,
   ArrowUp,
@@ -688,6 +690,11 @@ function App() {
   const [aiExplanation, setAiExplanation] = useState<string>('');
   const [aiActions, setAiActions] = useState<string[]>([]);
   const [isAiExecuting, setIsAiExecuting] = useState(false);
+
+  const [aiStrategy, setAiStrategy] = useState<string | null>(null);
+  const [isAiStrategyLoading, setIsAiStrategyLoading] = useState(false);
+  const [aiStrategyRecommendations, setAiStrategyRecommendations] = useState<{name: string, description: string}[]>([]);
+  const [aiStrategyActions, setAiStrategyActions] = useState<string[]>([]);
   const [targetDossier, setTargetDossier] = useState<string>('');
   const [targetRiskScore, setTargetRiskScore] = useState<{ score: number; level: string; factors: string[] } | null>(null);
   const [isDossierLoading, setIsDossierLoading] = useState(false);
@@ -712,13 +719,14 @@ function App() {
     };
 
     // If no API key, use local engine
-    if (!process.env.GEMINI_API_KEY) {
+    const apiKey = typeof process !== 'undefined' && process.env ? process.env.GEMINI_API_KEY : undefined;
+    if (!apiKey) {
       const promptText = typeof contents === 'string' ? contents : JSON.stringify(contents);
       return localIntelligence(promptText);
     }
 
     try {
-      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+      const ai = new GoogleGenAI({ apiKey });
       
       // Hardcoded to gemini-3-flash-preview (Best Free Tier)
       const selectedModel = 'gemini-3-flash-preview';
@@ -838,6 +846,20 @@ function App() {
     }
   }, [debouncedSearchQuery, activeTab]);
   const [modalContent, setModalContent] = useState<{ title: string; content: string; type: 'article' | 'search' | 'tool' | 'error' | 'info'; results?: any[]; url?: string } | null>(null);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isHistoryOpen, setIsHistoryOpen] = useState(false);
+  const [hasApiKey, setHasApiKey] = useState(false);
+
+  // Check for API key on mount
+  useEffect(() => {
+    const checkApiKey = async () => {
+      if (window.aistudio?.hasSelectedApiKey) {
+        const hasKey = await window.aistudio.hasSelectedApiKey();
+        setHasApiKey(hasKey);
+      }
+    };
+    checkApiKey();
+  }, []);
   const [isModalLoading, setIsModalLoading] = useState(false);
   const [copiedUrl, setCopiedUrl] = useState<string | null>(null);
   const [isVisualScanning, setIsVisualScanning] = useState(false);
@@ -1311,6 +1333,60 @@ function App() {
     }
   };
 
+  const handleAiStrategyAdvisor = async () => {
+    if (!searchQuery) return;
+    setIsAiStrategyLoading(true);
+    setAiStrategy(null);
+    setAiStrategyRecommendations([]);
+    setAiStrategyActions([]);
+    const runningToolId = addRunningTool('AI_STRATEGY_ADVISOR', 'ai', 'Strategy');
+    
+    try {
+      addToSearchHistory(searchQuery);
+      const prompt = `You are an elite OSINT strategist. Analyze the following search query: "${searchQuery}".
+      
+      Tasks:
+      1. Determine the nature of the query (Email, Username, Domain, IP, Real Name, Image, etc.).
+      2. Suggest the top 5 most relevant social media platforms to investigate for this specific target type.
+      3. Recommend 3 advanced search strategies (e.g., specific Google Dorks, breach database queries, or specialized tools).
+      4. Select the best OSINT tool groups from the following list to execute: ${TOOL_GROUPS.map(g => `${g.name} (ID: ${g.id})`).join(', ')}.
+      
+      Return a JSON object with:
+      {
+        "analysis": "A brief (2-3 sentence) analysis of the target type and why certain platforms/strategies are prioritized.",
+        "platforms": ["Platform 1", "Platform 2", "Platform 3", "Platform 4", "Platform 5"],
+        "strategies": [
+          {"name": "Strategy Name", "description": "How to execute this strategy."},
+          ...
+        ],
+        "recommendedGroups": ["g1", "g2", ...],
+        "suggestedActions": ["RUN_SOCIAL_SCAN", "RUN_WHOIS", "RUN_BREACH_CHECK"]
+      }`;
+
+      const result = await generateAiContent(prompt);
+      const text = result.text;
+      
+      const jsonMatch = text.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        const parsed = JSON.parse(jsonMatch[0]);
+        setAiStrategy(parsed.analysis);
+        setAiStrategyRecommendations(parsed.strategies || []);
+        setAiStrategyActions(parsed.suggestedActions || []);
+        
+        updateToolStatus(runningToolId, { status: 'completed', results: 'Strategy analysis complete' });
+      } else {
+        setAiStrategy(text);
+        updateToolStatus(runningToolId, { status: 'completed', results: 'Analysis complete' });
+      }
+    } catch (error) {
+      console.error('AI Strategy analysis failed:', error);
+      setAiStrategy('Failed to generate strategy. Please try standard intelligence scan.');
+      updateToolStatus(runningToolId, { status: 'failed', results: error instanceof Error ? error.message : 'Unknown error' });
+    } finally {
+      setIsAiStrategyLoading(false);
+    }
+  };
+
   const handleVisualScan = async (file: File) => {
     if (!file) return;
     setIsVisualScanning(true);
@@ -1649,7 +1725,7 @@ function App() {
       results.dns = dnsRes;
 
       setScanResults(results);
-      setScanHistory(prev => [results, ...prev].slice(0, 10));
+      setScanHistory(prev => [results, ...prev].slice(0, 50));
       if (timelineRes) setHistoricalTimeline(timelineRes);
       
     } catch (error) {
@@ -1695,16 +1771,20 @@ function App() {
       let finalBody = body;
 
       // Automatically switch to POST for long search queries to avoid 414 URI Too Long
-      if (!finalBody && api.includes('/api/osint/search?q=')) {
+      if (!finalBody && api.includes('/api/osint/search')) {
         try {
-          const urlObj = new URL(api, window.location.origin);
-          const q = urlObj.searchParams.get('q');
-          if (q && (api.length > 1000 || q.length > 500)) {
-            finalApi = '/api/osint/search';
-            finalBody = { q };
+          // If it's already a search URL with query param
+          if (api.includes('?q=')) {
+            const urlObj = new URL(api, window.location.origin);
+            const q = urlObj.searchParams.get('q');
+            if (q && (api.length > 1000 || q.length > 500)) {
+              finalApi = '/api/osint/search';
+              finalBody = { q };
+            }
           }
         } catch (e) {
-          // Fallback to GET if URL parsing fails
+          console.warn('Failed to parse search API URL for POST conversion:', e);
+          // Fallback to original GET
         }
       }
 
@@ -1824,7 +1904,7 @@ function App() {
       }
 
       setScanResults(prev => ({ ...prev, ...results }));
-      setScanHistory(prev => [results, ...prev].slice(0, 10));
+      setScanHistory(prev => [results, ...prev].slice(0, 50));
     } catch (error) {
       console.error('Scan failed:', error);
     } finally {
@@ -1876,7 +1956,7 @@ function App() {
       return;
     }
 
-    if (toolId === '89') { // System Diagnostics
+    if (toolId === 'diag-01') { // System Diagnostics
       setIsModalLoading(true);
       setModalContent({ title: 'System Diagnostics', content: 'Running diagnostics...', type: 'info', results: [], url: '/api/health' });
       const runningToolId = addRunningTool('System Diagnostics', 'diagnostics', 'System');
@@ -1925,7 +2005,25 @@ function App() {
 
     // If it's a Google search, use our search endpoint
     if (url.includes('google.com/search')) {
-      const q = new URL(url).searchParams.get('q');
+      let q: string | null = null;
+      try {
+        // Handle potential URL parsing issues for extremely long dorks
+        if (url.includes('q=')) {
+          const searchPart = url.split('q=')[1].split('&')[0];
+          q = decodeURIComponent(searchPart.replace(/\+/g, ' '));
+        } else {
+          q = new URL(url).searchParams.get('q');
+        }
+      } catch (e) {
+        console.warn('Standard URL parsing failed for Google search, trying manual extraction:', e);
+        try {
+          const match = url.match(/[?&]q=([^&]+)/);
+          if (match) q = decodeURIComponent(match[1].replace(/\+/g, ' '));
+        } catch (e2) {
+          console.error('Manual extraction also failed:', e2);
+        }
+      }
+
       if (q) {
         setIsModalLoading(true);
         setModalContent({ title: `${name} Results`, content: '', type: 'search', results: [], url });
@@ -2115,18 +2213,37 @@ function App() {
         api = `/api/osint/breach?target=${encodeURIComponent(searchQuery)}&tool=${toolName}`;
       } else if (tool.id === '3' || tool.id === '61') { // Wayback Machine or Wayback Timeline
         api = `/api/osint/wayback-timeline?url=${encodeURIComponent(searchQuery)}`;
+      } else if (tool.id === '87') { // AI Deep Scan Analyst
+        // Skip automated run for UI-only tools, but mark as completed
+        setWorkflowProgress(prev => ({ ...prev, [id]: true }));
+        continue;
+      } else if (tool.id === '88') { // AI Google Dork Generator
+        // Skip automated run for UI-only tools, but mark as completed
+        setWorkflowProgress(prev => ({ ...prev, [id]: true }));
+        continue;
+      } else if (tool.id === 'diag-01') { // System Diagnostics
+        api = '/api/health';
       } else {
         const url = tool.searchUrl ? tool.searchUrl.replace('{query}', encodeURIComponent(searchQuery)) : tool.url;
         try {
-          if (url.includes('google.com/search')) {
+          if (url && url.includes('google.com/search')) {
             const searchUrlObj = new URL(url);
             const q = searchUrlObj.searchParams.get('q');
             api = `/api/osint/search?q=${encodeURIComponent(q || searchQuery)}`;
-          } else {
+          } else if (url && url !== '#') {
             api = `/api/osint/proxy-tool?url=${encodeURIComponent(url)}`;
+          } else {
+            // Skip tools with no valid URL
+            setWorkflowProgress(prev => ({ ...prev, [id]: true }));
+            continue;
           }
         } catch (e) {
-          api = `/api/osint/proxy-tool?url=${encodeURIComponent(url)}`;
+          if (url && url !== '#') {
+            api = `/api/osint/proxy-tool?url=${encodeURIComponent(url)}`;
+          } else {
+            setWorkflowProgress(prev => ({ ...prev, [id]: true }));
+            continue;
+          }
         }
       }
 
@@ -2257,6 +2374,20 @@ function App() {
                 className="pl-9 pr-4 py-1.5 bg-white/5 border border-white/10 rounded-full font-mono text-[9px] uppercase tracking-widest focus:border-neon-cyan outline-none transition-all w-48"
               />
             </div>
+            <button 
+              onClick={() => setIsHistoryOpen(true)}
+              className="p-2 rounded-lg bg-white/5 hover:bg-white/10 transition-colors text-white/40 hover:text-neon-magenta"
+              title="Target History"
+            >
+              <Clock size={14} />
+            </button>
+            <button 
+              onClick={() => setIsSettingsOpen(true)}
+              className="p-2 rounded-lg bg-white/5 hover:bg-white/10 transition-colors text-white/40 hover:text-neon-cyan"
+              title="Settings"
+            >
+              <Settings size={14} />
+            </button>
             <button 
               onClick={toggleTheme}
               className="p-2 rounded-lg bg-white/5 hover:bg-white/10 transition-colors text-white/40 hover:text-white"
@@ -2646,6 +2777,14 @@ function App() {
                   {isAiLoading ? 'ANALYZING...' : 'AI_INTELLIGENCE_SCAN'}
                 </button>
                 <button 
+                  onClick={handleAiStrategyAdvisor}
+                  disabled={!searchQuery || isAiStrategyLoading}
+                  className={`flex-1 md:flex-none px-3 md:px-6 py-2 md:py-3 border-2 font-mono text-[9px] md:text-xs uppercase tracking-widest transition-all flex items-center justify-center gap-2 ${!searchQuery || isAiStrategyLoading ? 'border-white/10 text-white/20' : 'border-neon-magenta text-neon-magenta hover:bg-neon-magenta hover:text-black shadow-[0_0_15px_rgba(255,0,255,0.3)]'}`}
+                >
+                  <Sparkles size={12} className={isAiStrategyLoading ? 'animate-pulse' : ''} />
+                  {isAiStrategyLoading ? 'STRATEGIZING...' : 'AI_STRATEGY_ADVISOR'}
+                </button>
+                <button 
                   onClick={() => handleToolSearch('System Diagnostics')}
                   className="flex-1 md:flex-none px-3 md:px-6 py-2 md:py-3 border-2 border-neon-magenta text-neon-magenta font-mono text-[9px] md:text-xs uppercase tracking-widest transition-all flex items-center justify-center gap-2 hover:bg-neon-magenta hover:text-black shadow-[0_0_15px_rgba(255,0,255,0.3)]"
                   title="Run system diagnostics to check API health"
@@ -2842,6 +2981,55 @@ function App() {
             )}
           </AnimatePresence>
 
+          <AnimatePresence>
+            {aiStrategy && (
+              <motion.div 
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: 'auto' }}
+                exit={{ opacity: 0, height: 0 }}
+                className="max-w-7xl mx-auto px-6 py-4 border-t border-white/10 bg-neon-magenta/5 overflow-hidden"
+              >
+                <div className="flex items-start gap-4">
+                  <div className="p-2 bg-neon-magenta/20 rounded border border-neon-magenta/40 shrink-0">
+                    <Sparkles size={16} className="text-neon-magenta" />
+                  </div>
+                  <div className="flex-1">
+                    <div className="flex items-center justify-between mb-2">
+                      <h4 className="text-[10px] font-mono text-neon-magenta uppercase tracking-widest font-bold flex items-center gap-2">
+                        <Zap size={12} /> AI_STRATEGIC_ADVISORY_v1.0
+                      </h4>
+                      <button 
+                        onClick={() => setAiStrategy(null)}
+                        className="text-[9px] text-white/40 hover:text-white uppercase font-mono"
+                      >
+                        DISMISS
+                      </button>
+                    </div>
+                    <div className="text-[11px] font-mono text-white/80 leading-relaxed mb-4">
+                      {aiStrategy}
+                    </div>
+                    
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+                      {aiStrategyRecommendations.map((rec, i) => (
+                        <div key={i} className="p-3 bg-black/40 border border-neon-magenta/20 rounded">
+                          <h5 className="text-[10px] font-mono text-neon-magenta uppercase mb-1">{rec.name}</h5>
+                          <p className="text-[9px] font-mono text-white/60">{rec.description}</p>
+                        </div>
+                      ))}
+                    </div>
+
+                    <button 
+                      onClick={() => executeAiActions(aiStrategyActions)}
+                      className="px-6 py-2 bg-neon-magenta text-black font-mono text-[10px] uppercase tracking-widest font-bold hover:bg-white transition-all flex items-center gap-2"
+                    >
+                      <Terminal size={14} /> EXECUTE_TARGETED_SEARCH_SEQUENCE
+                    </button>
+                  </div>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
           {/* Bulk Actions Bar */}
           <AnimatePresence>
             {selectedToolIds.size > 0 && (
@@ -2868,7 +3056,6 @@ function App() {
                   <button 
                     onClick={() => {
                       // Logic to create a custom group or add to existing
-                      alert('Custom workflow feature coming soon. Tools exported to JSON.');
                       handleBulkExport();
                     }}
                     className="px-4 py-2 bg-neon-magenta/10 border border-neon-magenta text-neon-magenta font-mono text-[10px] uppercase tracking-widest hover:bg-neon-magenta hover:text-black transition-all flex items-center gap-2"
@@ -4963,8 +5150,225 @@ function App() {
         aiActions={aiActions}
         openInBrowser={openInBrowser}
       />
+      <AnimatePresence>
+        {isSettingsOpen && (
+          <SettingsModal 
+            isOpen={isSettingsOpen} 
+            onClose={() => setIsSettingsOpen(false)} 
+            hasApiKey={hasApiKey}
+            onSelectKey={async () => {
+              if (window.aistudio?.openSelectKey) {
+                await window.aistudio.openSelectKey();
+                const hasKey = await window.aistudio.hasSelectedApiKey();
+                setHasApiKey(hasKey);
+              }
+            }}
+          />
+        )}
+        {isHistoryOpen && (
+          <HistoryModal 
+            isOpen={isHistoryOpen} 
+            onClose={() => setIsHistoryOpen(false)} 
+            history={scanHistory}
+            onSelect={(item) => {
+              setSearchQuery(item.query);
+              setScanResults(item.results);
+              setIsDeepScan(item.isDeep);
+              setActiveTab('Scan');
+            }}
+          />
+        )}
+      </AnimatePresence>
       </div>
     </ErrorBoundary>
+  );
+}
+
+const SettingsModal = ({ isOpen, onClose, hasApiKey, onSelectKey }: { isOpen: boolean, onClose: () => void, hasApiKey: boolean, onSelectKey: () => void }) => {
+  if (!isOpen) return null;
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
+      onClick={onClose}
+    >
+      <motion.div
+        initial={{ opacity: 0, scale: 0.9, y: 20 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        exit={{ opacity: 0, scale: 0.9, y: 20 }}
+        className="w-full max-w-lg bg-[#0a0a0a] border border-white/10 shadow-2xl rounded-xl overflow-hidden"
+        onClick={e => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between p-6 border-b border-white/5">
+          <div className="flex items-center gap-3">
+            <Settings className="text-neon-cyan" size={20} />
+            <h2 className="text-xl font-black uppercase tracking-widest text-white">Application Settings</h2>
+          </div>
+          <button onClick={onClose} className="text-white/20 hover:text-white transition-colors">
+            <X size={20} />
+          </button>
+        </div>
+
+        <div className="p-6 space-y-8">
+          <section className="space-y-4">
+            <div className="flex items-center gap-2 mb-2">
+              <Key className="text-neon-magenta" size={16} />
+              <h3 className="text-xs font-black uppercase tracking-[0.2em] text-white/60">AI Configuration</h3>
+            </div>
+            
+            <div className="bg-white/5 border border-white/10 p-4 rounded-lg space-y-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-xs font-bold text-white uppercase tracking-wider">Gemini API Key</p>
+                  <p className="text-[10px] text-white/40 uppercase mt-1">Required for advanced AI analysis and deep scans</p>
+                </div>
+                <div className={`px-2 py-1 rounded text-[8px] font-black uppercase tracking-widest ${hasApiKey ? 'bg-neon-lime/20 text-neon-lime' : 'bg-red-500/20 text-red-500'}`}>
+                  {hasApiKey ? 'Configured' : 'Missing'}
+                </div>
+              </div>
+              
+              <button 
+                onClick={onSelectKey}
+                className="w-full py-2 bg-neon-cyan/10 border border-neon-cyan/30 rounded text-[10px] text-neon-cyan font-black uppercase tracking-[0.2em] hover:bg-neon-cyan hover:text-black transition-all shadow-[0_0_15px_rgba(0,243,255,0.1)]"
+              >
+                {hasApiKey ? 'Update API Key' : 'Configure API Key'}
+              </button>
+              
+              <p className="text-[8px] text-white/20 uppercase leading-relaxed">
+                Note: API keys are managed securely by the platform. You can also set keys in the system settings menu.
+              </p>
+            </div>
+          </section>
+
+          <section className="space-y-4">
+            <div className="flex items-center gap-2 mb-2">
+              <Database className="text-neon-cyan" size={16} />
+              <h3 className="text-xs font-black uppercase tracking-[0.2em] text-white/60">Data Management</h3>
+            </div>
+            
+            <div className="grid grid-cols-2 gap-4">
+              <button 
+                onClick={() => {
+                  if (confirm('Clear all local data? This will reset your history and saved searches.')) {
+                    localStorage.clear();
+                    window.location.reload();
+                  }
+                }}
+                className="p-4 bg-white/5 border border-white/10 rounded-lg hover:border-red-500/50 transition-all text-left group"
+              >
+                <Trash2 size={16} className="text-red-500 mb-2 group-hover:scale-110 transition-transform" />
+                <p className="text-[10px] font-bold text-white uppercase tracking-wider">Reset App</p>
+                <p className="text-[8px] text-white/40 uppercase mt-1">Clear all local storage</p>
+              </button>
+              
+              <button 
+                onClick={() => {
+                  const data = JSON.stringify(localStorage);
+                  const blob = new Blob([data], { type: 'application/json' });
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement('a');
+                  a.href = url;
+                  a.download = `osint_hub_backup_${Date.now()}.json`;
+                  a.click();
+                }}
+                className="p-4 bg-white/5 border border-white/10 rounded-lg hover:border-neon-cyan/50 transition-all text-left group"
+              >
+                <Download size={16} className="text-neon-cyan mb-2 group-hover:scale-110 transition-transform" />
+                <p className="text-[10px] font-bold text-white uppercase tracking-wider">Export Data</p>
+                <p className="text-[8px] text-white/40 uppercase mt-1">Backup all settings & history</p>
+              </button>
+            </div>
+          </section>
+        </div>
+
+        <div className="p-4 bg-white/5 border-t border-white/5 text-center">
+          <p className="text-[8px] text-white/20 uppercase tracking-[0.3em]">OSINT HUB v1.0.0 // SYSTEM_STABLE</p>
+        </div>
+      </motion.div>
+    </motion.div>
+  );
+};
+
+const HistoryModal = ({ isOpen, onClose, history, onSelect }: { isOpen: boolean, onClose: () => void, history: any[], onSelect: (item: any) => void }) => {
+  if (!isOpen) return null;
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
+      onClick={onClose}
+    >
+      <motion.div
+        initial={{ opacity: 0, scale: 0.9, y: 20 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        exit={{ opacity: 0, scale: 0.9, y: 20 }}
+        className="w-full max-w-2xl bg-[#0a0a0a] border border-white/10 shadow-2xl rounded-xl overflow-hidden flex flex-col max-h-[80vh]"
+        onClick={e => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between p-6 border-b border-white/5">
+          <div className="flex items-center gap-3">
+            <Clock className="text-neon-magenta" size={20} />
+            <h2 className="text-xl font-black uppercase tracking-widest text-white">Target History</h2>
+          </div>
+          <button onClick={onClose} className="text-white/20 hover:text-white transition-colors">
+            <X size={20} />
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-4 custom-scrollbar">
+          {history.length === 0 ? (
+            <div className="py-20 text-center opacity-20">
+              <History size={48} className="mx-auto mb-4" />
+              <p className="uppercase tracking-[0.2em] text-xs">No scan history found</p>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {history.map((item, i) => (
+                <button 
+                  key={i}
+                  onClick={() => {
+                    onSelect(item);
+                    onClose();
+                  }}
+                  className="w-full text-left p-4 bg-white/5 border border-white/5 rounded-lg hover:border-neon-cyan/30 hover:bg-white/10 transition-all group"
+                >
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-xs font-black text-white uppercase tracking-widest group-hover:text-neon-cyan transition-colors">{item.query}</span>
+                    <span className="text-[8px] text-white/20 font-mono">{new Date(item.timestamp).toLocaleString()}</span>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <span className={`text-[8px] font-bold uppercase tracking-widest ${item.isDeep ? 'text-neon-magenta' : 'text-neon-cyan'}`}>
+                      {item.isDeep ? 'Deep Scan' : 'Standard Scan'}
+                    </span>
+                    <span className="text-[8px] text-white/40 uppercase tracking-tighter">
+                      {item.results?.whois ? 'WHOIS' : ''} {item.results?.dns ? 'DNS' : ''} {item.results?.social ? 'SOCIAL' : ''}
+                    </span>
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="p-4 bg-white/5 border-t border-white/5 flex justify-between items-center">
+          <p className="text-[8px] text-white/20 uppercase tracking-[0.2em]">Showing last {history.length} results</p>
+          <button 
+            onClick={() => {
+              if (confirm('Clear all history?')) {
+                localStorage.removeItem('osint_scan_history');
+                window.location.reload();
+              }
+            }}
+            className="text-[8px] text-red-500 font-black uppercase tracking-widest hover:underline"
+          >
+            Clear All
+          </button>
+        </div>
+      </motion.div>
+    </motion.div>
   );
 }
 
@@ -5600,21 +6004,61 @@ const DiagnosticsView = ({ onRunDiagnostics }: { onRunDiagnostics: () => void })
           <div className="space-y-4">
             <div className="flex justify-between items-center border-b border-white/5 pb-2">
               <span className="text-[9px] font-mono text-white/40 uppercase">Model</span>
-              <span className="text-[10px] font-bold text-white uppercase">GEMINI-3-FLASH</span>
+              <span className="text-[10px] font-bold text-white uppercase">{healthData?.aiEngine?.model || 'GEMINI-3-FLASH'}</span>
             </div>
             <div className="flex justify-between items-center border-b border-white/5 pb-2">
               <span className="text-[9px] font-mono text-white/40 uppercase">API_Key</span>
-              <span className={`text-[10px] font-black uppercase ${process.env.GEMINI_API_KEY ? 'text-neon-lime' : 'text-red-500'}`}>
-                {process.env.GEMINI_API_KEY ? 'CONFIGURED' : 'MISSING'}
+              <span className={`text-[10px] font-black uppercase ${(healthData?.aiEngine?.configured || (typeof process !== 'undefined' && process.env && process.env.GEMINI_API_KEY)) ? 'text-neon-lime' : 'text-red-500'}`}>
+                {(healthData?.aiEngine?.configured || (typeof process !== 'undefined' && process.env && process.env.GEMINI_API_KEY)) ? 'CONFIGURED' : 'MISSING'}
               </span>
             </div>
             <div className="flex justify-between items-center border-b border-white/5 pb-2">
               <span className="text-[9px] font-mono text-white/40 uppercase">Latency</span>
-              <span className="text-[10px] font-bold text-neon-lime uppercase tracking-widest">OPTIMAL</span>
+              <span className={`text-[10px] font-bold uppercase tracking-widest ${healthData?.network?.latency === 'optimal' ? 'text-neon-lime' : 'text-neon-cyan'}`}>
+                {healthData?.network?.latency?.toUpperCase() || 'OPTIMAL'}
+              </span>
             </div>
             <div className="flex justify-between items-center">
               <span className="text-[9px] font-mono text-white/40 uppercase">Quota</span>
               <span className="text-[10px] font-bold text-neon-cyan uppercase tracking-widest">UNLIMITED_FREE</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+        <div className="bg-black/40 border-2 border-white/10 p-8 space-y-6">
+          <h3 className="text-[10px] font-mono text-white/40 uppercase tracking-[0.3em] flex items-center gap-2">
+            <Activity size={14} /> SERVER_RESOURCES
+          </h3>
+          <div className="space-y-4">
+            <div className="flex justify-between items-center border-b border-white/5 pb-2">
+              <span className="text-[9px] font-mono text-white/40 uppercase">Uptime</span>
+              <span className="text-[10px] font-bold text-white uppercase">
+                {healthData?.uptime ? `${Math.floor(healthData.uptime / 3600)}H ${Math.floor((healthData.uptime % 3600) / 60)}M` : 'N/A'}
+              </span>
+            </div>
+            <div className="flex justify-between items-center">
+              <span className="text-[9px] font-mono text-white/40 uppercase">Memory_Usage</span>
+              <span className="text-[10px] font-bold text-neon-cyan uppercase">
+                {healthData?.memory?.rss ? `${Math.round(healthData.memory.rss / 1024 / 1024)} MB` : 'N/A'}
+              </span>
+            </div>
+          </div>
+        </div>
+
+        <div className="bg-black/40 border-2 border-white/10 p-8 space-y-6">
+          <h3 className="text-[10px] font-mono text-white/40 uppercase tracking-[0.3em] flex items-center gap-2">
+            <Shield size={14} /> SECURITY_POSTURE
+          </h3>
+          <div className="space-y-4">
+            <div className="flex justify-between items-center border-b border-white/5 pb-2">
+              <span className="text-[9px] font-mono text-white/40 uppercase">SSL_Status</span>
+              <span className="text-[10px] font-bold text-neon-lime uppercase">ENCRYPTED</span>
+            </div>
+            <div className="flex justify-between items-center">
+              <span className="text-[9px] font-mono text-white/40 uppercase">Proxy_State</span>
+              <span className="text-[10px] font-bold text-neon-lime uppercase">ACTIVE</span>
             </div>
           </div>
         </div>

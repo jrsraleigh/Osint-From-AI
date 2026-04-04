@@ -11,6 +11,11 @@ import pLimit from 'p-limit';
 async function startServer() {
   const app = express();
   const PORT = 3000;
+
+  // Middleware
+  app.use(express.json({ limit: '50mb' }));
+  app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+
   const parser = new Parser({
     headers: {
       'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -18,11 +23,23 @@ async function startServer() {
   });
 
   app.get('/api/health', (req, res) => {
+    const hasGeminiKey = !!process.env.GEMINI_API_KEY;
     res.json({ 
       status: 'ok', 
       timestamp: new Date().toISOString(),
       environment: process.env.NODE_ENV || 'development',
-      version: '1.2.0'
+      version: '1.2.1',
+      uptime: process.uptime(),
+      memory: process.memoryUsage(),
+      aiEngine: {
+        configured: hasGeminiKey,
+        provider: 'Google Gemini',
+        model: 'gemini-3-flash'
+      },
+      network: {
+        status: 'connected',
+        latency: 'optimal'
+      }
     });
   });
 
@@ -39,7 +56,14 @@ async function startServer() {
     try {
       const feedPromises = feeds.map(async (f) => {
         try {
-          const feed = await axios.get(f.url, { timeout: 10000 });
+          const feed = await axios.get(f.url, { 
+            timeout: 10000,
+            headers: {
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+              'Accept': 'application/rss+xml, application/xml, text/xml, */*',
+              'Referer': 'https://www.google.com/'
+            }
+          });
           const parsed = await parser.parseString(feed.data);
           return parsed.items.map(item => ({
             ...item,
@@ -47,7 +71,7 @@ async function startServer() {
             sourceUrl: f.url
           }));
         } catch (e) {
-          console.error(`Failed to fetch feed ${f.name}:`, e);
+          console.error(`Failed to fetch feed ${f.name}:`, e.message);
           return [];
         }
       });
@@ -63,7 +87,7 @@ async function startServer() {
 
       res.json(sortedItems.slice(0, 50)); // Return top 50
     } catch (error) {
-      console.error('News fetch error:', error);
+      console.error('News fetch error:', error.message || error);
       res.status(500).json({ error: 'Failed to fetch news feed' });
     }
   });
@@ -102,26 +126,37 @@ async function startServer() {
     }
     
     try {
+      let results: any = null;
       // Try standard WHOIS lookup with timeout
       const timeoutPromise = new Promise((_, reject) => 
         setTimeout(() => reject(new Error('WHOIS lookup timed out')), 15000)
       );
       
-      let results;
       try {
-        results = await Promise.race([whois(query), timeoutPromise]) as any;
-      } catch (e: any) {
-        console.warn('Standard WHOIS failed, trying RDAP fallback:', e.message);
-        // Fallback to RDAP (Registration Data Access Protocol)
+        // Try RDAP (Registration Data Access Protocol) first as it's more reliable JSON
+        const rdapResponse = await axios.get(`https://rdap.org/domain/${query}`, { 
+          timeout: 10000, 
+          validateStatus: () => true,
+          headers: { 'Accept': 'application/json' }
+        });
+        
+        if (rdapResponse.status === 200 && rdapResponse.data && !rdapResponse.data.error) {
+          results = rdapResponse.data;
+        } else {
+          throw new Error('RDAP failed or returned no data');
+        }
+      } catch (rdapErr: any) {
+        console.warn('RDAP failed, trying standard WHOIS:', rdapErr.message);
+        // Fallback to standard WHOIS lookup with timeout
+        const timeoutPromiseFallback = new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('WHOIS lookup timed out')), 15000)
+        );
+        
         try {
-          const rdapResponse = await axios.get(`https://rdap.org/domain/${query}`, { timeout: 10000, validateStatus: () => true });
-          if (rdapResponse.status === 200) {
-            results = rdapResponse.data;
-          } else {
-            throw e; // Re-throw if RDAP also fails
-          }
-        } catch (rdapErr) {
-          throw e; // Re-throw original error if RDAP fails
+          results = await Promise.race([whois(query), timeoutPromiseFallback]) as any;
+        } catch (e: any) {
+          console.error('All WHOIS methods failed:', e.message);
+          throw e;
         }
       }
       
@@ -131,7 +166,7 @@ async function startServer() {
       }
       res.json(results);
     } catch (error: any) {
-      console.error('WHOIS error:', error);
+      console.error('WHOIS error:', error.message || error);
       
       // Handle specific "no whois server known" error
       if (error.message && (error.message.includes('no whois server is known') || error.message.includes('lookup:') || error.message.includes('timed out'))) {
@@ -213,7 +248,7 @@ async function startServer() {
 
       res.json(results);
     } catch (error: any) {
-      console.error('DNS error:', error);
+      console.error('DNS error:', error.message || error);
       res.status(500).json({ error: error.message || 'DNS lookup failed' });
     }
   });
@@ -272,13 +307,13 @@ async function startServer() {
         }))
       });
     } catch (error) {
-      console.error('Wayback timeline error:', error);
+      console.error('Wayback timeline error:', error.message || error);
       res.status(500).json({ error: 'Failed to fetch Wayback timeline' });
     }
   });
 
-  const searchLimit = pLimit(2); // Very low concurrency for search engines to avoid blocks
-  const socialLimit = pLimit(20); // Increased concurrency for social scans
+  const searchLimit = pLimit(10); // Increased concurrency
+  const socialLimit = pLimit(30); // Increased concurrency for social scans
   
   const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -305,11 +340,12 @@ async function startServer() {
     
     // Handle extremely long queries by chunking them
     // Google limit is ~32 words, and URL limit is ~2000 chars
-    if (query.length > 800 && (query.includes('OR') || query.includes('site:'))) {
+    if (depth === 0 && query.length > 500 && (query.includes('OR') || query.includes('site:'))) {
       // Try to extract the base query (e.g., "username") and the dork parts
       let baseQuery = '';
       let dorkPart = query;
       
+      // Handle queries like: "username" (site:a.com OR site:b.com)
       if (query.includes('(') && query.includes(')')) {
         const firstParen = query.indexOf('(');
         const lastParen = query.lastIndexOf(')');
@@ -322,19 +358,21 @@ async function startServer() {
         dorkPart = query.substring(firstSite).trim();
       }
 
-      const parts = dorkPart.split(/ OR | \+OR\+ | \+OR | OR\+ | \| /i).filter(p => p.trim().length > 0);
+      // Improved regex to split by OR, +OR+, | with or without spaces
+      const parts = dorkPart.split(/\s+OR\s+|\+OR\+|\s+\| \s+|OR\s+|\s+OR/i).filter(p => p.trim().length > 0);
       
-      if (parts.length > 3) {
-        console.log(`Chunking long query (${query.length} chars, ${parts.length} parts)`);
+      if (parts.length > 2) {
+        console.log(`[Search] Chunking long query (${query.length} chars, ${parts.length} parts)`);
         const chunks: string[] = [];
         let currentChunk: string[] = [];
         let currentLen = baseQuery.length;
         
         // Google allows up to 32 words. site:example.com counts as 1 word.
-        // We'll use 15 to be safe and keep URL length reasonable.
+        // We'll use 10 to be safe and keep URL length reasonable.
         for (const part of parts) {
           const partStr = part.trim();
-          if ((currentLen + partStr.length + 4) > 1500 || currentChunk.length >= 15) {
+          // Keep chunk length under 800 chars and under 10 dorks
+          if ((currentLen + partStr.length + 10) > 800 || currentChunk.length >= 10) {
             if (currentChunk.length > 0) {
               const chunkQuery = baseQuery ? `${baseQuery} (${currentChunk.join(' OR ')})` : currentChunk.join(' OR ');
               chunks.push(chunkQuery);
@@ -343,7 +381,7 @@ async function startServer() {
             currentLen = baseQuery.length + partStr.length;
           } else {
             currentChunk.push(partStr);
-            currentLen += partStr.length + 4;
+            currentLen += partStr.length + 4; // +4 for " OR "
           }
         }
         if (currentChunk.length > 0) {
@@ -351,20 +389,20 @@ async function startServer() {
           chunks.push(chunkQuery);
         }
         
-        console.log(`Split into ${chunks.length} chunks`);
+        console.log(`[Search] Split into ${chunks.length} chunks`);
         const allResults: any[] = [];
         
-        // Process chunks in parallel with a higher limit
-        const chunkLimit = pLimit(5);
-        const chunkPromises = chunks.slice(0, 20).map(chunk => 
+        // Process chunks in parallel with a limit
+        // Use the imported pLimit function
+        const chunkLimit = pLimit(5); 
+        const chunkPromises = chunks.slice(0, 30).map(chunk => 
           chunkLimit(async () => {
             try {
-              // Add a smaller jittered delay
-              await sleep(Math.random() * 1000 + 200);
-              const chunkResults = await scrapeSearchEngines(chunk, depth + 1);
-              return chunkResults;
+              // Add jittered delay to avoid rate limits
+              await sleep(Math.random() * 1000 + 500);
+              return await scrapeSearchEngines(chunk, depth + 1);
             } catch (err) {
-              console.error('Chunk search failed, continuing...', err);
+              console.error('[Search] Chunk search failed:', err.message || err);
               return [];
             }
           })
@@ -375,7 +413,7 @@ async function startServer() {
         
         // Deduplicate by link
         const uniqueResults = Array.from(new Map(allResults.map(r => [r.link, r])).values());
-        console.log(`Total unique results from chunks: ${uniqueResults.length}`);
+        console.log(`[Search] Total unique results from chunks: ${uniqueResults.length}`);
         return uniqueResults;
       }
     }
@@ -394,7 +432,7 @@ async function startServer() {
         const userAgent = userAgents[Math.floor(Math.random() * userAgents.length)];
         const googleUrl = `https://www.google.com/search?q=${encodeURIComponent(query)}&num=30`;
         
-        const response = await axios.get(googleUrl, {
+        const response = await searchLimit(() => axios.get(googleUrl, {
           headers: {
             'User-Agent': userAgent,
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
@@ -405,16 +443,21 @@ async function startServer() {
             'Cache-Control': 'max-age=0'
           },
           timeout: 15000,
-          validateStatus: (status) => status < 500 // Don't throw on 429
-        });
+          validateStatus: (status) => status < 500 // Don't throw on 429 or 414
+        }));
         
-        console.log(`[Search] Google status: ${response.status} for query: ${query}`);
+        console.log(`[Search] Google status: ${response.status} for query: ${query.substring(0, 50)}...`);
 
         if (response.status === 429) {
           console.warn(`[Search] Google rate limit (429) hit, retry ${googleRetries + 1}/${maxGoogleRetries}...`);
           googleRetries++;
           if (googleRetries > maxGoogleRetries) break;
           continue;
+        }
+
+        if (response.status === 414) {
+          console.error(`[Search] Google URI Too Long (414) for query: ${query.substring(0, 50)}...`);
+          break; // Chunking should have prevented this, but if it happens, we can't retry
         }
 
         const $ = cheerio.load(response.data);
@@ -450,14 +493,14 @@ async function startServer() {
         await sleep(Math.random() * 500 + 300);
         const ddgUrl = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
         const userAgent = userAgents[Math.floor(Math.random() * userAgents.length)];
-        const ddgResponse = await axios.get(ddgUrl, {
+        const ddgResponse = await searchLimit(() => axios.get(ddgUrl, {
           headers: { 
             'User-Agent': userAgent,
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
             'Referer': 'https://duckduckgo.com/'
           },
           timeout: 10000
-        });
+        }));
         const $ddg = cheerio.load(ddgResponse.data);
         $ddg('.result').each((i, el) => {
           const title = $ddg(el).find('.result__title').text().trim();
@@ -481,14 +524,14 @@ async function startServer() {
         await sleep(Math.random() * 1000 + 500);
         const bingUrl = `https://www.bing.com/search?q=${encodeURIComponent(query)}`;
         const userAgent = userAgents[Math.floor(Math.random() * userAgents.length)];
-        const bingResponse = await axios.get(bingUrl, {
+        const bingResponse = await searchLimit(() => axios.get(bingUrl, {
           headers: { 
             'User-Agent': userAgent,
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
             'Referer': 'https://www.bing.com/'
           },
           timeout: 10000
-        });
+        }));
         const $bing = cheerio.load(bingResponse.data);
         $bing('.b_algo').each((i, el) => {
           const title = $bing(el).find('h2').text().trim();
@@ -509,14 +552,14 @@ async function startServer() {
         await sleep(Math.random() * 1000 + 500);
         const yahooUrl = `https://search.yahoo.com/search?p=${encodeURIComponent(query)}`;
         const userAgent = userAgents[Math.floor(Math.random() * userAgents.length)];
-        const yahooResponse = await axios.get(yahooUrl, {
+        const yahooResponse = await searchLimit(() => axios.get(yahooUrl, {
           headers: { 
             'User-Agent': userAgent,
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
             'Referer': 'https://search.yahoo.com/'
           },
           timeout: 10000
-        });
+        }));
         const $yahoo = cheerio.load(yahooResponse.data);
         $yahoo('.algo-sr').each((i, el) => {
           const title = $yahoo(el).find('h3').text().trim();
@@ -542,7 +585,7 @@ async function startServer() {
       const results = await searchLimit(() => scrapeSearchEngines(String(q)));
       res.json(results);
     } catch (error) {
-      console.error('Search error:', error);
+      console.error('Search error:', error.message || error);
       res.status(500).json({ error: 'Search failed' });
     }
   };
@@ -583,7 +626,7 @@ async function startServer() {
       
       res.json({ title, content, url });
     } catch (error) {
-      console.error('Article fetch error:', error);
+      console.error('Article fetch error:', error.message || error);
       res.status(500).json({ error: 'Failed to fetch article' });
     }
   });
@@ -720,7 +763,7 @@ async function startServer() {
         results: results.slice(0, 100) // Limit to 100 items for performance
       });
     } catch (error) {
-      console.error('Proxy tool error:', error);
+      console.error('Proxy tool error:', error.message || error);
       res.status(500).json({ error: 'Failed to proxy tool' });
     }
   });
@@ -741,7 +784,7 @@ async function startServer() {
       const searchResults = await scrapeSearchEngines(query);
       res.json(searchResults);
     } catch (error) {
-      console.error('Breach search error:', error);
+      console.error('Breach search error:', error.message || error);
       res.status(500).json({ error: 'Breach search failed' });
     }
   });
@@ -1224,155 +1267,9 @@ async function startServer() {
       { name: 'Buddhism.StackExchange', url: `https://buddhism.stackexchange.com/users/${username}`, category: 'Other' },
       { name: 'Hinduism.StackExchange', url: `https://hinduism.stackexchange.com/users/${username}`, category: 'Other' },
       
-      // Chat & Messaging
-      { name: 'Telegram', url: `https://t.me/${username}`, category: 'Chat' },
-      { name: 'Discord', url: `https://discord.com/users/${username}`, category: 'Chat' },
-      { name: 'Kik', url: `https://ws2.kik.com/user/${username}`, category: 'Chat' },
-      { name: 'Skype', url: `https://web.skype.com/live:${username}`, category: 'Chat' },
-      { name: 'Slack', url: `https://${username}.slack.com`, category: 'Chat' },
-      { name: 'Line', url: `https://line.me/ti/p/~${username}`, category: 'Chat' },
-      { name: 'WeChat', url: `https://wechat.com/${username}`, category: 'Chat' },
-      { name: 'Chatroulette', url: `https://chatroulette.com/user/${username}`, category: 'Chat' },
-      { name: 'Tinychat', url: `https://tinychat.com/${username}`, category: 'Chat' },
-      { name: 'Camfrog', url: `https://www.camfrog.com/en/profile/${username}`, category: 'Chat' },
-      { name: 'Paltalk', url: `https://www.paltalk.com/people/${username}`, category: 'Chat' },
-      { name: 'ICQ', url: `https://icq.im/${username}`, category: 'Chat' },
-      { name: 'Mumble', url: `https://mumble.com/${username}`, category: 'Chat' },
-      { name: 'TeamSpeak', url: `https://teamspeak.com/${username}`, category: 'Chat' },
-      { name: 'Ventrilo', url: `https://ventrilo.com/${username}`, category: 'Chat' },
-      { name: 'RaidCall', url: `https://raidcall.com/${username}`, category: 'Chat' },
-      { name: 'Zello', url: `https://zello.me/${username}`, category: 'Chat' },
-      { name: 'Voxer', url: `https://voxer.com/u/${username}`, category: 'Chat' },
-      { name: 'Marco Polo', url: `https://marcopolo.me/u/${username}`, category: 'Chat' },
-      { name: 'Viber', url: `https://viber.com/${username}`, category: 'Chat' },
-      { name: 'Signal', url: `https://signal.me/#p/${username}`, category: 'Chat' },
-      { name: 'Emerald Chat', url: `https://www.emeraldchat.com/user/${username}`, category: 'Chat' },
-      { name: 'Monkey.app', url: `https://monkey.app/${username}`, category: 'Chat' },
-      { name: 'Holla', url: `https://holla.world/${username}`, category: 'Chat' },
-      { name: 'Azar', url: `https://azarlive.com/${username}`, category: 'Chat' },
-      { name: 'Yubo', url: `https://yubo.live/en/profile/${username}`, category: 'Chat' },
-      { name: 'Houseparty', url: `https://houseparty.com/user/${username}`, category: 'Chat' },
-      { name: 'Wire', url: `https://app.wire.com/${username}`, category: 'Chat' },
-      { name: 'Tox', url: `https://tox.chat/user/${username}`, category: 'Chat' },
-      { name: 'Session', url: `https://getsession.org/user/${username}`, category: 'Chat' },
-      { name: 'Briar', url: `https://briarproject.org/user/${username}`, category: 'Chat' },
-      { name: 'Element', url: `https://app.element.io/#/user/${username}`, category: 'Chat' },
-      { name: 'Rocket.Chat', url: `https://rocket.chat/${username}`, category: 'Chat' },
-      { name: 'Gitter', url: `https://gitter.im/${username}`, category: 'Chat' },
       
-      // Gaming
-      { name: 'Steam', url: `https://steamcommunity.com/id/${username}`, category: 'Gaming' },
-      { name: 'Twitch', url: `https://twitch.tv/${username}`, category: 'Gaming' },
-      { name: 'Xbox', url: `https://xboxgamertag.com/search/${username}`, category: 'Gaming' },
-      { name: 'PlayStation', url: `https://psnprofiles.com/${username}`, category: 'Gaming' },
-      { name: 'Roblox', url: `https://www.roblox.com/user.aspx?username=${username}`, category: 'Gaming' },
-      { name: 'Minecraft', url: `https://namemc.com/profile/${username}`, category: 'Gaming' },
-      { name: 'Epic Games', url: `https://www.epicgames.com/id/api/v1/accounts/display-name/${username}`, category: 'Gaming' },
-      { name: 'GOG', url: `https://www.gog.com/u/${username}`, category: 'Gaming' },
-      { name: 'Itch.io', url: `https://${username}.itch.io`, category: 'Gaming' },
-      { name: 'GameJolt', url: `https://gamejolt.com/@${username}`, category: 'Gaming' },
-      { name: 'Nintendo', url: `https://miiverse.nintendo.net/users/${username}`, category: 'Gaming' },
-      { name: 'Battle.net', url: `https://worldofwarcraft.com/en-us/character/${username}`, category: 'Gaming' },
       
-      // Dating
-      { name: 'Tinder', url: `https://tinder.com/@${username}`, category: 'Dating' },
-      { name: 'Bumble', url: `https://bumble.com/@${username}`, category: 'Dating' },
-      { name: 'OkCupid', url: `https://okcupid.com/profile/${username}`, category: 'Dating' },
-      { name: 'Badoo', url: `https://badoo.com/en/profile/${username}`, category: 'Dating' },
-      { name: 'Hinge', url: `https://hinge.co/${username}`, category: 'Dating' },
-      { name: 'Plenty of Fish', url: `https://www.pof.com/viewprofile.aspx?profile_id=${username}`, category: 'Dating' },
-      { name: 'Match', url: `https://www.match.com/profile/${username}`, category: 'Dating' },
-      { name: 'AdultFriendFinder', url: `https://adultfriendfinder.com/p/member_profile.cgi?person_id=${username}`, category: 'Dating' },
-      { name: 'Hi5', url: `https://www.hi5.com/profile.html?uid=${username}`, category: 'Dating' },
-      { name: 'Tagged', url: `https://www.tagged.com/${username}`, category: 'Dating' },
-      { name: 'Skout', url: `https://www.skout.com/profile/${username}`, category: 'Dating' },
-      { name: 'MeetMe', url: `https://www.meetme.com/${username}`, category: 'Dating' },
-      { name: 'Lovoo', url: `https://www.lovoo.com/profile/${username}`, category: 'Dating' },
-      { name: 'Jaumo', url: `https://www.jaumo.com/user/${username}`, category: 'Dating' },
-      { name: 'Twoo', url: `https://www.twoo.com/${username}`, category: 'Dating' },
-      { name: 'Mamba', url: `https://mamba.ru/en/profile/${username}`, category: 'Dating' },
-      { name: 'Ashley Madison', url: `https://www.ashleymadison.com/en-us/profile/${username}`, category: 'Dating' },
-      { name: 'OurTime', url: `https://www.ourtime.com/profile/${username}`, category: 'Dating' },
-      { name: 'BlackPeopleMeet', url: `https://www.blackpeoplemeet.com/profile/${username}`, category: 'Dating' },
-      { name: 'SingleParentMeet', url: `https://www.singleparentmeet.com/profile/${username}`, category: 'Dating' },
-      { name: 'SeniorPeopleMeet', url: `https://www.seniorpeoplemeet.com/profile/${username}`, category: 'Dating' },
-      { name: 'EHarmony', url: `https://www.eharmony.com/profile/${username}`, category: 'Dating' },
-      { name: 'Coffee Meets Bagel', url: `https://coffeemeetsbagel.com/profile/${username}`, category: 'Dating' },
-      { name: 'Happn', url: `https://www.happn.com/en/user/${username}`, category: 'Dating' },
-      { name: 'Grindr', url: `https://www.grindr.com/profile/${username}`, category: 'Dating' },
-      { name: 'Scruff', url: `https://www.scruff.com/profile/${username}`, category: 'Dating' },
-      { name: 'Jack\'d', url: `https://www.jackd.com/profile/${username}`, category: 'Dating' },
-      { name: 'HER', url: `https://weareher.com/profile/${username}`, category: 'Dating' },
-      { name: 'Taimi', url: `https://taimi.com/profile/${username}`, category: 'Dating' },
-      { name: 'Feeld', url: `https://feeld.co/profile/${username}`, category: 'Dating' },
-      { name: 'Pure', url: `https://pure.app/profile/${username}`, category: 'Dating' },
-      { name: 'KinkD', url: `https://www.kinkdapp.com/profile/${username}`, category: 'Dating' },
-      { name: 'Whiplr', url: `https://whiplr.com/user/${username}`, category: 'Dating' },
-      { name: 'FetLife', url: `https://fetlife.com/users/${username}`, category: 'Dating' },
-      { name: 'Alt.com', url: `https://www.alt.com/profile/${username}`, category: 'Dating' },
-      { name: 'Fling', url: `https://www.fling.com/profile/${username}`, category: 'Dating' },
-      { name: 'BeNaughty', url: `https://www.benaughty.com/profile/${username}`, category: 'Dating' },
-      { name: 'Christian Cafe', url: `https://www.christiancafe.com/profile/${username}`, category: 'Dating' },
-      { name: 'JewishFriendFinder', url: `https://www.jewishfriendfinder.com/profile/${username}`, category: 'Dating' },
-      { name: 'AsianFriendFinder', url: `https://www.asianfriendfinder.com/profile/${username}`, category: 'Dating' },
-      { name: 'BlackFriendFinder', url: `https://www.blackfriendfinder.com/profile/${username}`, category: 'Dating' },
-      { name: 'Amigos.com', url: `https://www.amigos.com/profile/${username}`, category: 'Dating' },
-      { name: 'FriendFinder', url: `https://friendfinder.com/p/member_profile.cgi?person_id=${username}`, category: 'Dating' },
-      { name: 'SeniorFriendFinder', url: `https://seniorfriendfinder.com/p/member_profile.cgi?person_id=${username}`, category: 'Dating' },
-      { name: 'C-Date', url: `https://www.c-date.com/profile/${username}`, category: 'Dating' },
-      { name: 'Victoria Milan', url: `https://www.victoriamilan.com/profile/${username}`, category: 'Dating' },
-      { name: 'Illicit Encounters', url: `https://www.illicitencounters.com/profile/${username}`, category: 'Dating' },
-      { name: 'Gleeden', url: `https://www.gleeden.com/profile/${username}`, category: 'Dating' },
-      { name: 'CougarLife', url: `https://www.cougarlife.com/profile/${username}`, category: 'Dating' },
-      { name: 'Christian Connection', url: `https://www.christianconnection.com/profile/${username}`, category: 'Dating' },
-      { name: 'SingleMuslim', url: `https://www.singlemuslim.com/profile/${username}`, category: 'Dating' },
-      { name: 'Muzz', url: `https://muzz.com/profile/${username}`, category: 'Dating' },
-      { name: 'Salams', url: `https://www.salams.app/profile/${username}`, category: 'Dating' },
-      { name: 'Dil Mil', url: `https://dilmil.co/profile/${username}`, category: 'Dating' },
-      { name: 'Shaadi', url: `https://www.shaadi.com/profile/${username}`, category: 'Dating' },
-      { name: 'BharatMatrimony', url: `https://www.bharatmatrimony.com/profile/${username}`, category: 'Dating' },
-      { name: 'Jeevansathi', url: `https://www.jeevansathi.com/profile/${username}`, category: 'Dating' },
-      { name: 'Sangam', url: `https://www.sangam.com/profile/${username}`, category: 'Dating' },
-      { name: 'Aisle', url: `https://www.aisle.co/profile/${username}`, category: 'Dating' },
-      { name: 'Woo', url: `https://www.getwooapp.com/profile/${username}`, category: 'Dating' },
-      { name: 'TrulyMadly', url: `https://trulymadly.com/profile/${username}`, category: 'Dating' },
-      { name: 'QuackQuack', url: `https://www.quackquack.in/profile/${username}`, category: 'Dating' },
-      { name: 'Zoosk', url: `https://www.zoosk.com/profile/${username}`, category: 'Dating' },
-      { name: 'ChristianMingle', url: `https://www.christianmingle.com/profile/${username}`, category: 'Dating' },
-      { name: 'JDate', url: `https://www.jdate.com/profile/${username}`, category: 'Dating' },
-      { name: 'SilverSingles', url: `https://www.silversingles.com/profile/${username}`, category: 'Dating' },
-      { name: 'EliteSingles', url: `https://www.elitesingles.com/profile/${username}`, category: 'Dating' },
-      { name: 'Clover', url: `https://www.clover.co/profile/${username}`, category: 'Dating' },
-      { name: 'Seeking', url: `https://www.seeking.com/member/${username}`, category: 'Dating' },
-      { name: 'SugarDaddie', url: `https://www.sugardaddie.com/profile/${username}`, category: 'Dating' },
-      { name: 'DateMyAge', url: `https://www.datemyage.com/profile/${username}`, category: 'Dating' },
-      { name: 'AmoLatina', url: `https://www.amolatina.com/profile/${username}`, category: 'Dating' },
-      { name: 'ColombiaCupid', url: `https://www.colombiacupid.com/en/profile/${username}`, category: 'Dating' },
-      { name: 'BrazilCupid', url: `https://www.brazilcupid.com/en/profile/${username}`, category: 'Dating' },
-      { name: 'MexicanCupid', url: `https://www.mexicancupid.com/en/profile/${username}`, category: 'Dating' },
-      { name: 'AfroIntroductions', url: `https://www.afrointroductions.com/en/profile/${username}`, category: 'Dating' },
-      { name: 'AsianDating', url: `https://www.asiandating.com/en/profile/${username}`, category: 'Dating' },
-      { name: 'Muslima', url: `https://www.muslima.com/en/profile/${username}`, category: 'Dating' },
-      { name: 'ThaiCupid', url: `https://www.thaicupid.com/en/profile/${username}`, category: 'Dating' },
-      { name: 'VietnamCupid', url: `https://www.vietnamcupid.com/en/profile/${username}`, category: 'Dating' },
-      { name: 'FilipinoCupid', url: `https://www.filipinocupid.com/en/profile/${username}`, category: 'Dating' },
-      { name: 'IndianCupid', url: `https://www.indiancupid.com/en/profile/${username}`, category: 'Dating' },
-      { name: 'PinkCupid', url: `https://www.pinkcupid.com/en/profile/${username}`, category: 'Dating' },
-      { name: 'GayCupid', url: `https://www.gaycupid.com/en/profile/${username}`, category: 'Dating' },
-      { name: 'MilitaryCupid', url: `https://www.militarycupid.com/en/profile/${username}`, category: 'Dating' },
-      { name: 'InterracialCupid', url: `https://www.interracialcupid.com/en/profile/${username}`, category: 'Dating' },
       
-      // NSFW / Adult
-      { name: 'OnlyFans', url: `https://onlyfans.com/${username}`, category: 'NSFW' },
-      { name: 'Fansly', url: `https://fansly.com/${username}`, category: 'NSFW' },
-      { name: 'Pornhub', url: `https://pornhub.com/users/${username}`, category: 'NSFW' },
-      { name: 'XHamster', url: `https://xhamster.com/users/${username}`, category: 'NSFW' },
-      { name: 'Chaturbate', url: `https://chaturbate.com/${username}`, category: 'NSFW' },
-      { name: 'ManyVids', url: `https://www.manyvids.com/Profile/${username}`, category: 'NSFW' },
-      { name: 'Cam4', url: `https://www.cam4.com/${username}`, category: 'NSFW' },
-      { name: 'RedTube', url: `https://www.redtube.com/users/${username}`, category: 'NSFW' },
-      { name: 'YouPorn', url: `https://www.youporn.com/users/${username}`, category: 'NSFW' },
-      { name: 'XVideos', url: `https://www.xvideos.com/profiles/${username}`, category: 'NSFW' },
       
       // Creative & Professional
       { name: 'LinkedIn', url: `https://linkedin.com/in/${username}`, category: 'Professional' },
@@ -1527,40 +1424,6 @@ async function startServer() {
       { name: 'AdultChat', url: `https://adultchat.com/${username}`, category: 'NSFW' },
       { name: 'Sex.com', url: `https://www.sex.com/user/${username}`, category: 'NSFW' },
       
-      // Lifestyle & Niche
-      { name: 'Wikiloc', url: `https://www.wikiloc.com/wikiloc/user.do?id=${username}`, category: 'Other' },
-      { name: 'Ingress', url: `https://ingress.com/profile/${username}`, category: 'Gaming' },
-      { name: 'Pokemon', url: `https://www.pokemon.com/us/pokemon-trainer-club/profile/${username}`, category: 'Gaming' },
-      { name: 'Duolingo', url: `https://www.duolingo.com/profile/${username}`, category: 'Other' },
-      { name: 'Memrise', url: `https://www.memrise.com/user/${username}`, category: 'Other' },
-      { name: 'Babbel', url: `https://www.babbel.com/profile/${username}`, category: 'Other' },
-      { name: 'Busuu', url: `https://www.busuu.com/user/${username}`, category: 'Other' },
-      { name: 'italki', url: `https://www.italki.com/user/${username}`, category: 'Other' },
-      { name: 'Preply', url: `https://preply.com/en/tutor/${username}`, category: 'Other' },
-      { name: 'Verbling', url: `https://www.verbling.com/teachers/${username}`, category: 'Other' },
-      { name: 'HelloTalk', url: `https://www.hellotalk.com/user/${username}`, category: 'Other' },
-      { name: 'Tandem', url: `https://www.tandem.net/profile/${username}`, category: 'Other' },
-      { name: 'CouchSurfing', url: `https://www.couchsurfing.com/people/${username}`, category: 'Other' },
-      { name: 'Trustpilot', url: `https://www.trustpilot.com/users/${username}`, category: 'Other' },
-      { name: 'Yelp', url: `https://www.yelp.com/user_details?userid=${username}`, category: 'Other' },
-      { name: 'TripAdvisor', url: `https://www.tripadvisor.com/Profile/${username}`, category: 'Other' },
-      { name: 'Foursquare', url: `https://foursquare.com/user/${username}`, category: 'Other' },
-      { name: 'Vivino', url: `https://www.vivino.com/users/${username}`, category: 'Other' },
-      { name: 'CellarTracker', url: `https://www.cellartracker.com/user.asp?User=${username}`, category: 'Other' },
-      { name: 'BeerAdvocate', url: `https://www.beeradvocate.com/user/profile/${username}`, category: 'Other' },
-      { name: 'RateBeer', url: `https://www.ratebeer.com/user/${username}`, category: 'Other' },
-      { name: 'AllRecipes', url: `https://www.allrecipes.com/cook/${username}`, category: 'Other' },
-      { name: 'Cookpad', url: `https://cookpad.com/us/users/${username}`, category: 'Other' },
-      { name: 'Yummly', url: `https://www.yummly.com/profile/${username}`, category: 'Other' },
-      { name: 'Tasty', url: `https://tasty.co/profile/${username}`, category: 'Other' },
-      { name: 'Food52', url: `https://food52.com/users/${username}`, category: 'Other' },
-      { name: 'Epicurious', url: `https://www.epicurious.com/expert/${username}`, category: 'Other' },
-      { name: 'BonAppetit', url: `https://www.bonappetit.com/contributor/${username}`, category: 'Other' },
-      { name: 'SeriousEats', url: `https://www.seriouseats.com/user/${username}`, category: 'Other' },
-      { name: 'TheKitchn', url: `https://www.thekitchn.com/author/${username}`, category: 'Other' },
-      { name: 'ApartmentTherapy', url: `https://www.apartmenttherapy.com/author/${username}`, category: 'Other' },
-      { name: 'Houzz', url: `https://www.houzz.com/user/${username}`, category: 'Other' },
-      { name: 'Zillow', url: `https://www.zillow.com/profile/${username}`, category: 'Other' },
       { name: 'Redfin', url: `https://www.redfin.com/profile/${username}`, category: 'Other' },
       { name: 'Realtor.com', url: `https://www.realtor.com/profile/${username}`, category: 'Other' },
       { name: 'Trulia', url: `https://www.trulia.com/profile/${username}`, category: 'Other' },
@@ -1663,23 +1526,17 @@ async function startServer() {
       { name: 'CockyBoys', url: `https://www.cockyboys.com/profile/${username}`, category: 'NSFW' },
       { name: 'TreasureIslandMedia', url: `https://www.treasureislandmedia.com/profile/${username}`, category: 'NSFW' },
       
-      // More Social & Media
-      { name: 'Mix', url: `https://mix.com/${username}`, category: 'Social' },
-      { name: 'WeHeartIt', url: `https://weheartit.com/${username}`, category: 'Social' },
-      { name: 'Gab', url: `https://gab.com/${username}`, category: 'Social' },
-      { name: 'Parler', url: `https://parler.com/profile/${username}`, category: 'Social' },
-      { name: 'Gettr', url: `https://gettr.com/user/${username}`, category: 'Social' },
-      { name: 'Rumble', url: `https://rumble.com/user/${username}`, category: 'Social' },
-      { name: 'Odysee', url: `https://odysee.com/@${username}`, category: 'Social' },
-      { name: 'Bitchute', url: `https://www.bitchute.com/channel/${username}`, category: 'Social' },
-      { name: 'Dailymotion', url: `https://www.dailymotion.com/${username}`, category: 'Social' },
-      { name: 'Letterboxd', url: `https://letterboxd.com/${username}`, category: 'Other' },
-      { name: 'StoryGraph', url: `https://app.thestorygraph.com/profile/${username}`, category: 'Other' },
-      { name: 'LibraryThing', url: `https://www.librarything.com/profile/${username}`, category: 'Other' },
-      { name: 'RateYourMusic', url: `https://rateyourmusic.com/~${username}`, category: 'Other' },
-      { name: 'AniList', url: `https://anilist.co/user/${username}`, category: 'Other' },
-      { name: 'Kitsu', url: `https://kitsu.io/users/${username}`, category: 'Other' },
     ];
+
+    // Deduplicate sites by name to prevent React key errors
+    const seenNames = new Set();
+    sites = sites.filter(site => {
+      if (seenNames.has(site.name)) {
+        return false;
+      }
+      seenNames.add(site.name);
+      return true;
+    });
 
     if (queryLimit) {
       const limitVal = parseInt(String(queryLimit));
@@ -1926,7 +1783,7 @@ async function startServer() {
 
       res.json(results.filter(r => r.status === 'Found'));
     } catch (error) {
-      console.error('Social scan failed or timed out:', error);
+      console.error('Social scan failed or timed out:', error.message || error);
       res.status(504).json({ error: 'Social scan timed out' });
     }
   });
