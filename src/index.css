@@ -125,3 +125,25 @@ html {
 .animate-loading-bar {
   animation: loading-bar 2s infinite linear;
 }
+
+/* Landscape and Orientation Fixes */
+@media (max-height: 500px) and (orientation: landscape) {
+  .intelligence-window-container {
+    padding: 0 !important;
+  }
+  .intelligence-window-content {
+    padding: 1rem !important;
+  }
+  .intelligence-window-header {
+    padding: 0.5rem 1rem !important;
+  }
+  .intelligence-window-header h2 {
+    font-size: 1.25rem !important;
+  }
+}
+
+@media (max-width: 640px) {
+  .dossier-content {
+    font-size: 11px !important;
+  }
+}

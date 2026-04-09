@@ -4,9 +4,19 @@ import path from 'path';
 import whois from 'whois-json';
 import dns from 'dns';
 import axios from 'axios';
+import axiosRetry from 'axios-retry';
 import * as cheerio from 'cheerio';
 import Parser from 'rss-parser';
 import pLimit from 'p-limit';
+
+// Configure axios retry
+axiosRetry(axios, { 
+  retries: 2, 
+  retryDelay: axiosRetry.exponentialDelay,
+  retryCondition: (error) => {
+    return axiosRetry.isNetworkOrIdempotentRequestError(error) || error.response?.status === 429;
+  }
+});
 
 async function startServer() {
   const app = express();
@@ -15,6 +25,19 @@ async function startServer() {
   // Middleware
   app.use(express.json({ limit: '50mb' }));
   app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+
+  // Custom API Keys Middleware
+  app.use((req, res, next) => {
+    const customKeys = req.headers['x-custom-api-keys'];
+    if (customKeys) {
+      try {
+        (req as any).customApiKeys = JSON.parse(String(customKeys));
+      } catch (e) {
+        console.warn('Failed to parse custom API keys header:', e.message);
+      }
+    }
+    next();
+  });
 
   const parser = new Parser({
     headers: {
@@ -125,55 +148,83 @@ async function startServer() {
       query = query.substring(4);
     }
     
+    console.log(`[WHOIS] Starting lookup for: ${query}`);
+    
     try {
       let results: any = null;
-      // Try standard WHOIS lookup with timeout
-      const timeoutPromise = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('WHOIS lookup timed out')), 15000)
-      );
       
+      // 1. Try RDAP (Registration Data Access Protocol) first as it's more reliable JSON
       try {
-        // Try RDAP (Registration Data Access Protocol) first as it's more reliable JSON
+        console.log(`[WHOIS] Trying RDAP for ${query}...`);
         const rdapResponse = await axios.get(`https://rdap.org/domain/${query}`, { 
-          timeout: 10000, 
+          timeout: 8000, 
           validateStatus: () => true,
           headers: { 'Accept': 'application/json' }
         });
         
         if (rdapResponse.status === 200 && rdapResponse.data && !rdapResponse.data.error) {
           results = rdapResponse.data;
+          console.log(`[WHOIS] RDAP success for ${query}`);
         } else {
-          throw new Error('RDAP failed or returned no data');
+          console.warn(`[WHOIS] RDAP returned non-200 or error for ${query}: ${rdapResponse.status}`);
         }
       } catch (rdapErr: any) {
-        console.warn('RDAP failed, trying standard WHOIS:', rdapErr.message);
-        // Fallback to standard WHOIS lookup with timeout
-        const timeoutPromiseFallback = new Promise((_, reject) => 
+        console.warn(`[WHOIS] RDAP failed for ${query}:`, rdapErr.message);
+      }
+
+      // 2. Fallback to standard WHOIS lookup if RDAP failed
+      if (!results) {
+        console.log(`[WHOIS] Falling back to standard WHOIS for ${query}...`);
+        const timeoutPromise = new Promise((_, reject) => 
           setTimeout(() => reject(new Error('WHOIS lookup timed out')), 15000)
         );
         
         try {
-          results = await Promise.race([whois(query), timeoutPromiseFallback]) as any;
+          // whois-json can sometimes hang, so we race it
+          results = await Promise.race([whois(query), timeoutPromise]) as any;
+          console.log(`[WHOIS] Standard WHOIS success for ${query}`);
         } catch (e: any) {
-          console.error('All WHOIS methods failed:', e.message);
-          throw e;
+          console.error(`[WHOIS] Standard WHOIS failed for ${query}:`, e.message);
+          
+          // 3. Last ditch effort: Try another RDAP server directly if it's a common TLD
+          try {
+            const tld = query.split('.').pop()?.toLowerCase();
+            let directRdapUrl = '';
+            if (['com', 'net'].includes(tld || '')) directRdapUrl = `https://rdap.verisign.com/com/v1/domain/${query}`;
+            else if (['org'].includes(tld || '')) directRdapUrl = `https://rdap.publicinterestregistry.net/rdap/domain/${query}`;
+            
+            if (directRdapUrl) {
+              console.log(`[WHOIS] Trying direct RDAP for ${query}: ${directRdapUrl}`);
+              const directRes = await axios.get(directRdapUrl, { timeout: 5000, validateStatus: () => true });
+              if (directRes.status === 200 && directRes.data) {
+                results = directRes.data;
+                console.log(`[WHOIS] Direct RDAP success for ${query}`);
+              }
+            }
+          } catch (directErr) {
+            console.warn(`[WHOIS] Direct RDAP failed for ${query}`);
+          }
+
+          if (!results) throw e;
         }
       }
       
       // whois-json sometimes returns an empty object or an object with an error property
       if (!results || (Object.keys(results).length === 0 && !results.entities) || results.error) {
+        console.warn(`[WHOIS] No data found for ${query}`);
         return res.status(404).json({ error: 'No WHOIS data found' });
       }
+      
       res.json(results);
     } catch (error: any) {
-      console.error('WHOIS error:', error.message || error);
+      console.error(`[WHOIS] Final error for ${query}:`, error.message || error);
       
-      // Handle specific "no whois server known" error
+      // Handle specific "no whois server is known" error
       if (error.message && (error.message.includes('no whois server is known') || error.message.includes('lookup:') || error.message.includes('timed out'))) {
         return res.status(422).json({ error: error.message || `No WHOIS server known for TLD: .${query.split('.').pop()}` });
       }
       
-      res.status(500).json({ error: 'WHOIS lookup failed. The TLD might not be supported by the local WHOIS client.' });
+      res.status(500).json({ error: `WHOIS lookup failed: ${error.message || 'Unknown error'}` });
     }
   });
 
@@ -196,16 +247,38 @@ async function startServer() {
       query = query.split('@')[1];
     }
 
+    // Basic domain validation
+    const isDomain = query.includes('.') && query.length > 3;
+    if (!isDomain) {
+      console.log(`[DNS] Skipping resolution for non-domain target: ${query}`);
+      return res.status(400).json({ error: 'Target does not appear to be a valid domain name.' });
+    }
+
+    console.log(`[DNS] Starting lookup for: ${query}`);
+
     try {
       const results: any = {};
       const recordTypes: any[] = ['A', 'AAAA', 'MX', 'TXT', 'NS', 'CNAME', 'SOA'];
       
-      const dnsPromises = recordTypes.map(type => new Promise((resolve) => {
-        dns.resolve(query, type, (err, addresses) => {
-          if (err) resolve({ type, data: [] });
-          else resolve({ type, data: addresses });
-        });
-      }));
+      const dnsPromises = recordTypes.map(async (type) => {
+        try {
+          const timeoutPromise = new Promise((_, reject) => 
+            setTimeout(() => reject(new Error('Timeout')), 5000)
+          );
+          
+          const addresses = await Promise.race([
+            dns.promises.resolve(query, type),
+            timeoutPromise
+          ]) as any[];
+          
+          return { type, data: addresses };
+        } catch (err: any) {
+          if (err.message !== 'Timeout' && err.code !== 'ENODATA' && err.code !== 'ENOTFOUND') {
+            console.warn(`[DNS] Error resolving ${type} for ${query}:`, err.code || err.message);
+          }
+          return { type, data: [] };
+        }
+      });
 
       const dnsResults = (await Promise.all(dnsPromises)) as any[];
       dnsResults.forEach((r: any) => {
@@ -216,40 +289,62 @@ async function startServer() {
 
       // Fallback to Google DNS API if local resolution fails or returns nothing
       if (Object.keys(results).length === 0) {
+        console.log(`[DNS] Local resolution returned nothing for ${query}, trying Google DNS fallback...`);
         try {
-          const googleDnsRes = await axios.get(`https://dns.google/resolve?name=${query}&type=ANY`, { timeout: 5000 });
+          const googleDnsRes = await axios.get(`https://dns.google/resolve?name=${query}&type=ANY`, { timeout: 6000 });
           if (googleDnsRes.data && googleDnsRes.data.Answer) {
             googleDnsRes.data.Answer.forEach((ans: any) => {
-              const typeMap: any = { 1: 'A', 28: 'AAAA', 15: 'MX', 16: 'TXT', 2: 'NS', 5: 'CNAME', 6: 'SOA' };
+              const typeMap: any = { 1: 'A', 28: 'AAAA', 15: 'MX', 16: 'TXT', 2: 'NS', 5: 'CNAME', 6: 'SOA', 33: 'SRV', 257: 'CAA' };
               const typeName = typeMap[ans.type] || `TYPE_${ans.type}`;
               if (!results[typeName]) results[typeName] = [];
-              results[typeName].push(ans.data);
+              
+              // Google DNS data might need cleaning
+              let data = ans.data;
+              if (typeName === 'TXT' && data.startsWith('"') && data.endsWith('"')) {
+                data = data.substring(1, data.length - 1);
+              }
+              results[typeName].push(data);
             });
+            console.log(`[DNS] Google DNS fallback success for ${query}`);
           }
-        } catch (e) {
-          console.warn('Google DNS fallback failed:', e);
+        } catch (e: any) {
+          console.warn(`[DNS] Google DNS fallback failed for ${query}:`, e.message);
         }
       }
 
+      // One last try with resolveAny if still nothing
       if (Object.keys(results).length === 0) {
-        // One last try with resolveAny
+        console.log(`[DNS] Trying resolveAny for ${query}...`);
         try {
           const anyResults = await new Promise((resolve, reject) => {
+            const timeoutId = setTimeout(() => reject(new Error('resolveAny timed out')), 5000);
             dns.resolveAny(query, (err, addresses) => {
+              clearTimeout(timeoutId);
               if (err) reject(err);
               else resolve(addresses);
             });
           });
-          return res.json(anyResults);
-        } catch (e) {
-          return res.status(404).json({ error: 'No DNS records found' });
+          
+          if (Array.isArray(anyResults) && anyResults.length > 0) {
+            console.log(`[DNS] resolveAny success for ${query}`);
+            return res.json({ ANY: anyResults });
+          }
+        } catch (e: any) {
+          if (e.code !== 'ENOTFOUND' && e.code !== 'ENODATA') {
+            console.warn(`[DNS] resolveAny failed for ${query}:`, e.message);
+          }
         }
+      }
+
+      if (Object.keys(results).length === 0) {
+        console.warn(`[DNS] No records found for ${query}`);
+        return res.status(404).json({ error: 'No DNS records found. The domain might be inactive or invalid.' });
       }
 
       res.json(results);
     } catch (error: any) {
-      console.error('DNS error:', error.message || error);
-      res.status(500).json({ error: error.message || 'DNS lookup failed' });
+      console.error(`[DNS] Global error for ${query}:`, error.message || error);
+      res.status(500).json({ error: `DNS name resolution failed: ${error.message || 'Unknown error'}` });
     }
   });
 
@@ -312,8 +407,8 @@ async function startServer() {
     }
   });
 
-  const searchLimit = pLimit(10); // Increased concurrency
-  const socialLimit = pLimit(30); // Increased concurrency for social scans
+  const searchLimit = pLimit(15); // Increased concurrency
+  const socialLimit = pLimit(50); // Increased concurrency for social scans
   
   const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -1545,19 +1640,26 @@ async function startServer() {
       }
     }
 
-    // Add a global timeout for the social scan to prevent hangs (6 minutes)
+    let isCancelled = false;
+    req.on('close', () => {
+      isCancelled = true;
+    });
+
+    // Add a global timeout for the social scan to prevent hangs (3 minutes)
+    let timeoutId: any;
     const socialScanTimeout = new Promise((_, reject) => 
-      setTimeout(() => reject(new Error('Social scan timed out')), 360000)
+      timeoutId = setTimeout(() => reject(new Error('Social scan timed out')), 180000)
     );
 
     try {
       const results = await Promise.race([
         Promise.all(sites.map((site) => socialLimit(async () => {
-      try {
-        await sleep(Math.random() * 800 + 200); // Small jitter
-        const response = await axios.get(site.url, { 
-          timeout: 6000, // Increased timeout slightly
-          validateStatus: () => true,
+          if (isCancelled) return { name: site.name, url: site.url, category: site.category, status: 'Cancelled' };
+          try {
+            await sleep(Math.random() * 200 + 50); // Reduced jitter for faster scans
+            const response = await axios.get(site.url, { 
+              timeout: 6000, // Reduced timeout per site
+              validateStatus: () => true,
           headers: {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
             'Accept-Language': 'en-US,en;q=0.9',
@@ -1624,7 +1726,35 @@ async function startServer() {
             'this profile is private',
             'this account is private',
             'page unavailable',
-            'this page is unavailable'
+            'this page is unavailable',
+            'profile not available',
+            'account has been deleted',
+            'user has been deleted',
+            'account suspended',
+            'user suspended',
+            'page not found',
+            '404: not found',
+            'sorry, we couldn\'t find that',
+            'this user doesn\'t have any posts yet',
+            'no results for',
+            'search returned no results',
+            'profile is currently hidden',
+            'user is inactive',
+            'this page does not exist',
+            'check the url',
+            'invalid profile',
+            'no such profile',
+            'profile is unavailable',
+            'user is unavailable',
+            'page is unavailable',
+            'content not found',
+            'resource not found',
+            'the requested user was not found',
+            'we can\'t find the page you\'re looking for',
+            'this user hasn\'t joined yet',
+            'invite this user',
+            'user not registered',
+            'not a registered user'
           ];
 
           if (notFoundStrings.some(str => bodyLower.includes(str))) {
@@ -1632,30 +1762,29 @@ async function startServer() {
           }
 
           // Site-specific overrides
-          if (site.name === 'Twitter' && bodyLower.includes('this account doesn’t exist')) isFound = false;
-          if (site.name === 'Instagram' && bodyLower.includes('sorry, this page isn\'t available')) isFound = false;
-          if (site.name === 'Reddit' && bodyLower.includes('user not found')) isFound = false;
-          if (site.name === 'TikTok' && bodyLower.includes('couldn\'t find this account')) isFound = false;
+          if (site.name === 'Twitter' && (bodyLower.includes('this account doesn’t exist') || bodyLower.includes('account suspended'))) isFound = false;
+          if (site.name === 'Instagram' && (bodyLower.includes('sorry, this page isn\'t available') || bodyLower.includes('link you followed may be broken'))) isFound = false;
+          if (site.name === 'Reddit' && (bodyLower.includes('user not found') || bodyLower.includes('nobody on reddit goes by that name'))) isFound = false;
+          if (site.name === 'TikTok' && (bodyLower.includes('couldn\'t find this account') || bodyLower.includes('this account is private'))) isFound = false;
           if (site.name === 'Snapchat' && bodyLower.includes('not found')) isFound = false;
-          if (site.name === 'Pinterest' && bodyLower.includes('user not found')) isFound = false;
+          if (site.name === 'Pinterest' && (bodyLower.includes('user not found') || bodyLower.includes('resource not found'))) isFound = false;
           if (site.name === 'Steam' && bodyLower.includes('the specified profile could not be found')) isFound = false;
-          if (site.name === 'Twitch' && bodyLower.includes('content is not available')) isFound = false;
-          if (site.name === 'GitHub' && bodyLower.includes('not found')) isFound = false;
-          if (site.name === 'Facebook' && bodyLower.includes('content isn\'t available')) isFound = false;
-          if (site.name === 'LinkedIn' && bodyLower.includes('page not found')) isFound = false;
-          if (site.name === 'Tumblr' && bodyLower.includes('nothing here')) isFound = false;
-          if (site.name === 'Medium' && bodyLower.includes('out of nothing')) isFound = false;
-          if (site.name === 'SoundCloud' && bodyLower.includes('can\'t find that user')) isFound = false;
-          if (site.name === 'Vimeo' && bodyLower.includes('not found')) isFound = false;
-          if (site.name === 'Behance' && bodyLower.includes('could not be found')) isFound = false;
-          if (site.name === 'Dribbble' && bodyLower.includes('not found')) isFound = false;
-          if (site.name === 'Flickr' && bodyLower.includes('not found')) isFound = false;
-          if (site.name === 'Patreon' && bodyLower.includes('not found')) isFound = false;
-          if (site.name === 'OnlyFans' && bodyLower.includes('not found')) isFound = false;
+          if (site.name === 'Twitch' && (bodyLower.includes('content is not available') || bodyLower.includes('unless you have a time machine'))) isFound = false;
+          if (site.name === 'GitHub' && (bodyLower.includes('not found') || bodyLower.includes('404'))) isFound = false;
+          if (site.name === 'Facebook' && (bodyLower.includes('content isn\'t available') || bodyLower.includes('link you followed may be broken'))) isFound = false;
+          if (site.name === 'LinkedIn' && (bodyLower.includes('page not found') || bodyLower.includes('profile not found'))) isFound = false;
+          if (site.name === 'Tumblr' && (bodyLower.includes('nothing here') || bodyLower.includes('404'))) isFound = false;
+          if (site.name === 'Medium' && (bodyLower.includes('out of nothing') || bodyLower.includes('404'))) isFound = false;
+          if (site.name === 'SoundCloud' && (bodyLower.includes('can\'t find that user') || bodyLower.includes('404'))) isFound = false;
+          if (site.name === 'Vimeo' && (bodyLower.includes('not found') || bodyLower.includes('404'))) isFound = false;
+          if (site.name === 'Behance' && (bodyLower.includes('could not be found') || bodyLower.includes('404'))) isFound = false;
+          if (site.name === 'Dribbble' && (bodyLower.includes('not found') || bodyLower.includes('404'))) isFound = false;
+          if (site.name === 'Flickr' && (bodyLower.includes('not found') || bodyLower.includes('404'))) isFound = false;
+          if (site.name === 'Patreon' && (bodyLower.includes('not found') || bodyLower.includes('404'))) isFound = false;
+          if (site.name === 'OnlyFans' && (bodyLower.includes('not found') || bodyLower.includes('404'))) isFound = false;
         }
 
-        // Automatic Weeding: Check if username is actually in the page content
-        // Most real profiles will mention the username in the title or meta tags
+        let confidence = 0;
         if (isFound) {
           const $ = cheerio.load(body);
           const title = $('title').text().toLowerCase();
@@ -1663,49 +1792,50 @@ async function startServer() {
           const metaOgTitle = $('meta[property="og:title"]').attr('content')?.toLowerCase() || '';
           
           const usernameLower = username.toLowerCase();
-          const hasUsernameInMeta = title.includes(usernameLower) || 
-                                   metaDesc.includes(usernameLower) || 
-                                   metaOgTitle.includes(usernameLower);
+          const inTitle = title.includes(usernameLower);
+          const inMeta = metaDesc.includes(usernameLower) || metaOgTitle.includes(usernameLower);
           
-          // If the username isn't in the metadata, we check the body more strictly
+          if (inTitle) confidence += 50;
+          if (inMeta) confidence += 30;
+          if (bodyLower.includes(`/${usernameLower}`)) confidence += 20;
+
+          const hasUsernameInMeta = inTitle || inMeta;
+          
           if (!hasUsernameInMeta) {
-            // Some sites don't put username in title, so we check body too
-            // But we check for the username as a whole word or in a URL to avoid partial matches
             const usernameRegex = new RegExp(`\\b${usernameLower}\\b`, 'i');
             if (!usernameRegex.test(bodyLower) && !bodyLower.includes(`/${usernameLower}`)) {
               isFound = false;
+            } else {
+              confidence += 10;
             }
           }
 
-          // Check for "Login" or "Sign Up" walls that return 200 OK
           const loginKeywords = [
-            'login to continue', 
-            'sign up to see', 
-            'create an account', 
-            'log in to your account', 
-            'please log in', 
-            'you must be logged in',
-            'sign in to',
-            'join now to',
-            'create your profile'
+            'login to continue', 'sign up to see', 'create an account', 
+            'log in to your account', 'please log in', 'you must be logged in',
+            'sign in to', 'join now to', 'create your profile'
           ];
           
           if (loginKeywords.some(kw => bodyLower.includes(kw)) && body.length < 15000) {
-            // If it's a login wall and doesn't explicitly have the username in a strong place
             const title = bodyLower.match(/<title>(.*?)<\/title>/)?.[1] || '';
             if (!title.includes(username.toLowerCase())) {
               isFound = false;
+            } else {
+              confidence -= 20;
             }
           }
           
-          // Check for search pages that return 200 OK for any query
           const searchKeywords = ['search results for', 'results for', 'showing results for', 'no results found for', 'find users'];
           if (searchKeywords.some(kw => bodyLower.includes(kw))) {
-            // If it's a search page, it's not a profile
             isFound = false;
           }
         }
-        
+
+        // Filter out low confidence results unless they are site-specific overrides
+        if (isFound && confidence < 20 && !['Twitter', 'GitHub', 'Instagram', 'Reddit'].includes(site.name)) {
+          isFound = false;
+        }
+
         let finalStatus = isFound ? 'Found' : (isRedirectedToGeneric ? 'Possible but Deleted' : 'Not Found');
         
         // Basic Profile Extraction for popular sites
@@ -1770,6 +1900,7 @@ async function startServer() {
           url: site.url, 
           category: site.category,
           status: finalStatus,
+          confidence: isFound ? confidence : 0,
           bio,
           followers,
           avatar
@@ -1781,7 +1912,14 @@ async function startServer() {
         socialScanTimeout
       ]) as any[];
 
-      res.json(results.filter(r => r.status === 'Found'));
+      if (timeoutId) clearTimeout(timeoutId);
+      
+      if (isCancelled) {
+        console.log(`[Social] Scan for ${username} was cancelled by client.`);
+        return; // Don't send response if already closed
+      }
+
+      res.json(results.filter(r => r.status === 'Found' || r.status === 'Possible but Deleted' || r.status === 'Error'));
     } catch (error) {
       console.error('Social scan failed or timed out:', error.message || error);
       res.status(504).json({ error: 'Social scan timed out' });
