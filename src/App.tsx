@@ -527,6 +527,10 @@ function App() {
     });
   };
 
+  const removeFromSearchHistory = (query: string) => {
+    setSearchHistory(prev => prev.filter(q => q !== query));
+  };
+
   const [premadeDorkPresets, setPremadeDorkPresets] = useState(() => {
     const saved = localStorage.getItem('premadeDorkPresets');
     const initial = [
@@ -1710,6 +1714,7 @@ function App() {
 
   const handleHistoricalScan = async () => {
     if (!searchQuery) return;
+    addToSearchHistory(searchQuery);
     setIsScanning(true);
     setIsHistoricalScan(true);
     setIsDeepScan(true);
@@ -2284,6 +2289,7 @@ function App() {
 
   const handleRunGroup = async () => {
     if (!searchQuery || !selectedGroup) return;
+    addToSearchHistory(searchQuery);
     const group = TOOL_GROUPS.find(g => g.id === selectedGroup);
     if (!group) return;
 
@@ -2434,10 +2440,6 @@ function App() {
   return (
     <ErrorBoundary>
       <div className="min-h-screen bg-bg-primary text-text-primary font-sans selection:bg-neon-magenta selection:text-white transition-colors duration-300">
-      {/* Decorative Splashes */}
-      <div className="fixed top-[-10%] left-[-10%] w-[40%] h-[40%] bg-neon-cyan/10 blur-[120px] rounded-full pointer-events-none" />
-      <div className="fixed bottom-[-10%] right-[-10%] w-[40%] h-[40%] bg-neon-magenta/10 blur-[120px] rounded-full pointer-events-none" />
-
       {/* Navigation Bar */}
       <nav className="sticky top-0 z-50 bg-[#050505]/80 backdrop-blur-xl border-b border-white/5 px-6 py-3">
         <div className="max-w-7xl mx-auto flex items-center justify-between">
@@ -2628,39 +2630,60 @@ function App() {
                 <AnimatePresence>
                   {showHistoryDropdown && filteredHistory.length > 0 && (
                     <motion.div 
-                      initial={{ opacity: 0, y: 10 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      exit={{ opacity: 0, y: 10 }}
-                      className="absolute top-full left-0 w-full mt-2 bg-bg-secondary border border-border-primary shadow-2xl z-50 max-h-64 overflow-y-auto rounded-lg"
+                      initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                      animate={{ opacity: 1, y: 0, scale: 1 }}
+                      exit={{ opacity: 0, y: 10, scale: 0.95 }}
+                      className="absolute top-full left-0 w-full mt-2 bg-bg-secondary border-2 border-neon-cyan/30 shadow-[0_10px_40px_rgba(0,0,0,0.8)] z-[100] max-h-80 overflow-y-auto rounded-lg backdrop-blur-xl"
                     >
-                      <div className="p-2 border-b border-border-primary flex items-center justify-between bg-white/5">
-                        <span className="text-[8px] font-mono text-text-secondary uppercase tracking-[0.2em] px-2">SEARCH_HISTORY</span>
+                      <div className="p-3 border-b border-white/10 flex items-center justify-between bg-white/5 sticky top-0 z-10 backdrop-blur-md">
+                        <div className="flex items-center gap-2">
+                          <History size={14} className="text-neon-cyan" />
+                          <span className="text-[10px] font-mono text-white/60 uppercase tracking-[0.2em]">Recent_Intelligence_Queries</span>
+                        </div>
                         <button 
                           onClick={(e) => {
                             e.stopPropagation();
-                            setSearchHistory([]);
-                            localStorage.removeItem('osintSearchHistory');
+                            if (window.confirm('Wipe all search history?')) {
+                              setSearchHistory([]);
+                              localStorage.removeItem('osintSearchHistory');
+                            }
                           }}
-                          className="text-[8px] font-mono text-neon-magenta uppercase hover:underline px-2"
+                          className="text-[9px] font-mono text-neon-magenta uppercase hover:text-white transition-colors flex items-center gap-1"
                         >
-                          CLEAR_HISTORY
+                          <X size={10} /> PURGE_ALL
                         </button>
                       </div>
-                      {filteredHistory.map((s, i) => (
-                        <button 
-                          key={i}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setSearchQuery(s);
-                            setShowHistoryDropdown(false);
-                            setHistoryIndex(-1);
-                          }}
-                          className={`w-full text-left px-4 py-3 font-mono text-xs uppercase tracking-widest border-b border-border-primary/5 last:border-0 flex items-center gap-3 group transition-colors ${historyIndex === i ? 'bg-white/10 text-neon-cyan' : 'hover:bg-white/5'}`}
-                        >
-                          <History size={12} className={`text-text-secondary group-hover:text-neon-cyan ${historyIndex === i ? 'text-neon-cyan' : ''}`} />
-                          <span className="truncate">{s}</span>
-                        </button>
-                      ))}
+                      <div className="py-1">
+                        {filteredHistory.map((s, i) => (
+                          <div 
+                            key={i}
+                            className={`flex items-center group transition-colors ${historyIndex === i ? 'bg-neon-cyan/10' : 'hover:bg-white/5'}`}
+                          >
+                            <button 
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setSearchQuery(s);
+                                setShowHistoryDropdown(false);
+                                setHistoryIndex(-1);
+                              }}
+                              className="flex-1 text-left px-4 py-3 font-mono text-xs uppercase tracking-widest flex items-center gap-3 overflow-hidden"
+                            >
+                              <Search size={12} className={`shrink-0 ${historyIndex === i ? 'text-neon-cyan' : 'text-white/20 group-hover:text-neon-cyan'}`} />
+                              <span className="truncate text-white/80 group-hover:text-white">{s}</span>
+                            </button>
+                            <button 
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                removeFromSearchHistory(s);
+                              }}
+                              className="p-3 text-white/10 hover:text-neon-magenta transition-colors opacity-0 group-hover:opacity-100"
+                              title="Remove from history"
+                            >
+                              <X size={14} />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
                     </motion.div>
                   )}
                 </AnimatePresence>
@@ -5346,7 +5369,10 @@ function App() {
               setIsDeepScan(item.isDeep);
               setShowIntelligenceWindow(true);
               setActiveTab('TargetIntel');
+              setIsResultsOpen(true);
             }}
+            setScanResults={setScanResults}
+            setIsResultsOpen={setIsResultsOpen}
           />
         )}
       </AnimatePresence>
@@ -5517,7 +5543,7 @@ const SettingsModal = ({
   );
 };
 
-const HistoryModal = ({ isOpen, onClose, history, onSelect }: { isOpen: boolean, onClose: () => void, history: any[], onSelect: (item: any) => void }) => {
+const HistoryModal = ({ isOpen, onClose, history, onSelect, setScanResults, setIsResultsOpen }: { isOpen: boolean, onClose: () => void, history: any[], onSelect: (item: any) => void, setScanResults: (results: any) => void, setIsResultsOpen: (open: boolean) => void }) => {
   if (!isOpen) return null;
   
   // Ensure we only show the last 10 as requested previously
@@ -5564,17 +5590,54 @@ const HistoryModal = ({ isOpen, onClose, history, onSelect }: { isOpen: boolean,
                   }}
                   className="w-full text-left p-4 bg-white/5 border border-white/5 rounded-lg hover:border-neon-cyan/30 hover:bg-white/10 transition-all group"
                 >
-                  <div className="flex items-center justify-between mb-1">
-                    <span className="text-xs font-black text-white uppercase tracking-widest group-hover:text-neon-cyan transition-colors">{item.query}</span>
-                    <span className="text-[8px] text-white/20 font-mono">{new Date(item.timestamp).toLocaleString()}</span>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <span className={`text-[8px] font-bold uppercase tracking-widest ${item.isDeep ? 'text-neon-magenta' : 'text-neon-cyan'}`}>
-                      {item.isDeep ? 'Deep Scan' : 'Standard Scan'}
-                    </span>
-                    <span className="text-[8px] text-white/40 uppercase tracking-tighter">
-                      {item.results?.whois ? 'WHOIS' : ''} {item.results?.dns ? 'DNS' : ''} {item.results?.social ? 'SOCIAL' : ''}
-                    </span>
+                  <div className="flex items-center justify-between group">
+                    <div className="flex-1 text-left">
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-xs font-black text-white uppercase tracking-widest group-hover:text-neon-cyan transition-colors">{item.query}</span>
+                        <span className="text-[8px] text-white/20 font-mono">{new Date(item.timestamp).toLocaleString()}</span>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <span className={`text-[8px] font-bold uppercase tracking-widest ${item.isDeep ? 'text-neon-magenta' : 'text-neon-cyan'}`}>
+                          {item.isDeep ? 'Deep Scan' : 'Standard Scan'}
+                        </span>
+                        <div className="flex flex-wrap gap-1">
+                          {item.results?.whois && <span className="text-[7px] px-1 bg-white/5 border border-white/10 text-white/40 uppercase">WHOIS</span>}
+                          {item.results?.dns && <span className="text-[7px] px-1 bg-white/5 border border-white/10 text-white/40 uppercase">DNS</span>}
+                          {item.results?.social && (
+                            <span className="text-[7px] px-1 bg-neon-lime/10 border border-neon-lime/30 text-neon-lime uppercase">
+                              SOCIAL ({Array.isArray(item.results.social) ? item.results.social.length : 'OK'})
+                            </span>
+                          )}
+                          {item.results?.ghunt && <span className="text-[7px] px-1 bg-white/5 border border-white/10 text-white/40 uppercase">GHUNT</span>}
+                          {item.results?.epieos && <span className="text-[7px] px-1 bg-white/5 border border-white/10 text-white/40 uppercase">EPIEOS</span>}
+                          {item.results?.holehe && <span className="text-[7px] px-1 bg-white/5 border border-white/10 text-white/40 uppercase">HOLEHE</span>}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 ml-4">
+                      <button 
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onSelect(item);
+                          onClose();
+                        }}
+                        className="p-2 bg-neon-cyan/10 border border-neon-cyan/30 text-neon-cyan hover:bg-neon-cyan hover:text-black transition-all rounded"
+                        title="Load into Workspace"
+                      >
+                        <ExternalLink size={14} />
+                      </button>
+                      <button 
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setScanResults(item.results);
+                          setIsResultsOpen(true);
+                        }}
+                        className="p-2 bg-neon-yellow/10 border border-neon-yellow/30 text-neon-yellow hover:bg-neon-yellow hover:text-black transition-all rounded"
+                        title="View Full Results Matrix"
+                      >
+                        <BarChart3 size={14} />
+                      </button>
+                    </div>
                   </div>
                 </button>
               ))}

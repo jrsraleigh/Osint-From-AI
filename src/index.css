@@ -104,14 +104,6 @@ html {
   mask-repeat: no-repeat;
 }
 
-.brick-overlay {
-  background-image: url("data:image/svg+xml,%3Csvg width='42' height='44' viewBox='0 0 42 44' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%234a0404' fill-opacity='0.05'%3E%3Cpath d='M0 0h42v44H0V0zm1 1h40v42H1V1zM0 22h42v2H0v-2zm21 0h2v22h-2V22zm0-22h2v22h-2V0z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E");
-}
-
-:root[data-theme='dark'] .brick-overlay {
-  background-image: url("data:image/svg+xml,%3Csvg width='42' height='44' viewBox='0 0 42 44' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23ffffff' fill-opacity='0.05'%3E%3Cpath d='M0 0h42v44H0V0zm1 1h40v42H1V1zM0 22h42v2H0v-2zm21 0h2v22h-2V22zm0-22h2v22h-2V0z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E");
-}
-
 @keyframes loading-bar {
   0% { transform: translateX(-100%); }
   50% { transform: translateX(0); }
