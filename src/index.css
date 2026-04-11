@@ -56,11 +56,7 @@
     background-color: var(--bg-primary);
     color: var(--text-primary);
     transition: background-color 0.3s ease, color 0.3s ease;
-    background-image: 
-      linear-gradient(rgba(0, 0, 0, 0.7), rgba(0, 0, 0, 0.7)),
-      url('https://images.unsplash.com/photo-1589939705384-5185137a7f0f?q=80&w=2070&auto=format&fit=crop');
-    background-size: cover;
-    background-attachment: fixed;
+    background-image: none;
     overflow-x: hidden;
     scrollbar-gutter: stable;
   }

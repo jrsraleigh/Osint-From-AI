@@ -13,7 +13,10 @@ import {
   CartesianGrid, 
   Tooltip as ChartTooltip, 
   ResponsiveContainer, 
-  Cell 
+  Cell,
+  PieChart,
+  Pie,
+  Legend
 } from 'recharts';
 import { 
   Search, 
@@ -70,7 +73,7 @@ import {
   ArrowUp,
   ArrowDown,
   BarChart3,
-  PieChart,
+  PieChart as LucidePieChart,
   Network,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
@@ -861,6 +864,7 @@ function App() {
   const [modalContent, setModalContent] = useState<{ title: string; content: string; type: 'article' | 'search' | 'tool' | 'error' | 'info'; results?: any[]; url?: string } | null>(null);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
+  const [isResultsOpen, setIsResultsOpen] = useState(false);
   const [hasApiKey, setHasApiKey] = useState(false);
 
   // Check for API key on mount
@@ -1767,13 +1771,22 @@ function App() {
       results.dns = dnsRes;
 
       setScanResults(results);
+      
+      // Prune results for history to stay within localStorage limits
+      const prunedResults = { ...results };
+      if (prunedResults.social && Array.isArray(prunedResults.social)) {
+        prunedResults.social = prunedResults.social.filter((s: any) => 
+          s.status === 'Found' || s.status === 'Possible but Deleted'
+        ).slice(0, 200);
+      }
+
       const historyItem = {
         timestamp: results.timestamp,
         query: searchQuery,
         isDeep: true,
-        results: results
+        results: prunedResults
       };
-      setScanHistory(prev => [historyItem, ...prev].slice(0, 50));
+      setScanHistory(prev => [historyItem, ...prev].slice(0, 10));
       if (timelineRes) setHistoricalTimeline(timelineRes);
       
     } catch (error) {
@@ -1991,13 +2004,22 @@ function App() {
       }
 
       setScanResults(prev => ({ ...prev, ...results }));
+      
+      // Prune results for history to stay within localStorage limits
+      const prunedResults = { ...results };
+      if (prunedResults.social && Array.isArray(prunedResults.social)) {
+        prunedResults.social = prunedResults.social.filter((s: any) => 
+          s.status === 'Found' || s.status === 'Possible but Deleted'
+        ).slice(0, 200); // Limit to 200 found profiles
+      }
+
       const historyItem = {
         timestamp: results.timestamp,
         query: searchQuery,
         isDeep: deep,
-        results: results
+        results: prunedResults
       };
-      setScanHistory(prev => [historyItem, ...prev].slice(0, 50));
+      setScanHistory(prev => [historyItem, ...prev].slice(0, 10));
     } catch (error) {
       console.error('Scan failed:', error);
     } finally {
@@ -2007,8 +2029,6 @@ function App() {
   };
 
   const handleToolSearch = async (toolOrName: OSINTTool | string, customUrl?: string) => {
-    if (!searchQuery && !customUrl) return;
-    
     let url = '';
     let name = '';
     let toolId = '';
@@ -2413,7 +2433,7 @@ function App() {
 
   return (
     <ErrorBoundary>
-      <div className="min-h-screen bg-bg-primary text-text-primary font-sans selection:bg-neon-magenta selection:text-white transition-colors duration-300 brick-overlay">
+      <div className="min-h-screen bg-bg-primary text-text-primary font-sans selection:bg-neon-magenta selection:text-white transition-colors duration-300">
       {/* Decorative Splashes */}
       <div className="fixed top-[-10%] left-[-10%] w-[40%] h-[40%] bg-neon-cyan/10 blur-[120px] rounded-full pointer-events-none" />
       <div className="fixed bottom-[-10%] right-[-10%] w-[40%] h-[40%] bg-neon-magenta/10 blur-[120px] rounded-full pointer-events-none" />
@@ -2474,11 +2494,25 @@ function App() {
               />
             </div>
             <button 
+              onClick={() => setShowCommandPalette(true)}
+              className="p-2 rounded-lg bg-white/5 hover:bg-white/10 transition-colors text-white/40 hover:text-neon-cyan lg:hidden"
+              title="Command Palette"
+            >
+              <Terminal size={14} />
+            </button>
+            <button 
               onClick={() => setIsHistoryOpen(true)}
               className="p-2 rounded-lg bg-white/5 hover:bg-white/10 transition-colors text-white/40 hover:text-neon-magenta"
               title="Target History"
             >
               <Clock size={14} />
+            </button>
+            <button 
+              onClick={() => setIsResultsOpen(true)}
+              className="p-2 rounded-lg bg-white/5 hover:bg-white/10 transition-colors text-white/40 hover:text-neon-yellow"
+              title="All Results"
+            >
+              <BarChart3 size={14} />
             </button>
             <button 
               onClick={() => setIsSettingsOpen(true)}
@@ -3414,13 +3448,15 @@ function App() {
                           <div key={i} className="flex items-center justify-between gap-4 group/item">
                             <button 
                               onClick={() => {
-                                setSearchQuery(h.target);
-                                setScanResults(h);
-                                setActiveTab('Scan');
+                                setSearchQuery(h.query);
+                                setScanResults(h.results);
+                                setIsDeepScan(h.isDeep);
+                                setShowIntelligenceWindow(true);
+                                setActiveTab('TargetIntel');
                               }}
                               className="text-[10px] font-mono text-white/60 hover:text-neon-cyan transition-all truncate uppercase tracking-widest"
                             >
-                              [{h.type}] {h.target}
+                              [{h.results?.type || 'SCAN'}] {h.query}
                             </button>
                             <span className="text-[8px] font-mono text-white/20 uppercase shrink-0">
                               {new Date(h.timestamp).toLocaleTimeString()}
@@ -5202,6 +5238,13 @@ function App() {
       {/* Floating Monitor Toggle */}
       <div className="fixed bottom-6 right-6 z-[110] flex flex-col gap-4">
         <button
+          onClick={() => setShowCommandPalette(true)}
+          className="p-4 rounded-full shadow-2xl transition-all duration-300 group bg-white/10 text-white hover:bg-white/20 hover:scale-110 border border-white/10 backdrop-blur-md"
+          title="Command Palette"
+        >
+          <Search size={24} />
+        </button>
+        <button
           onClick={() => setShowIntelligenceWindow(!showIntelligenceWindow)}
           className={`p-4 rounded-full shadow-2xl transition-all duration-300 group ${
             showIntelligenceWindow 
@@ -5269,6 +5312,13 @@ function App() {
         openInBrowser={openInBrowser}
       />
       <AnimatePresence>
+        {isResultsOpen && (
+          <ResultsModal 
+            isOpen={isResultsOpen} 
+            onClose={() => setIsResultsOpen(false)} 
+            scanResults={scanResults}
+          />
+        )}
         {isSettingsOpen && (
           <SettingsModal 
             isOpen={isSettingsOpen} 
@@ -5294,7 +5344,8 @@ function App() {
               setSearchQuery(item.query);
               setScanResults(item.results);
               setIsDeepScan(item.isDeep);
-              setActiveTab('Scan');
+              setShowIntelligenceWindow(true);
+              setActiveTab('TargetIntel');
             }}
           />
         )}
@@ -5468,6 +5519,9 @@ const SettingsModal = ({
 
 const HistoryModal = ({ isOpen, onClose, history, onSelect }: { isOpen: boolean, onClose: () => void, history: any[], onSelect: (item: any) => void }) => {
   if (!isOpen) return null;
+  
+  // Ensure we only show the last 10 as requested previously
+  const displayHistory = (history || []).slice(0, 10);
   return (
     <motion.div
       initial={{ opacity: 0 }}
@@ -5494,14 +5548,14 @@ const HistoryModal = ({ isOpen, onClose, history, onSelect }: { isOpen: boolean,
         </div>
 
         <div className="flex-1 overflow-y-auto p-4 custom-scrollbar">
-          {history.length === 0 ? (
+          {displayHistory.length === 0 ? (
             <div className="py-20 text-center opacity-20">
               <History size={48} className="mx-auto mb-4" />
               <p className="uppercase tracking-[0.2em] text-xs">No scan history found</p>
             </div>
           ) : (
             <div className="space-y-2">
-              {history.map((item, i) => (
+              {displayHistory.map((item, i) => (
                 <button 
                   key={i}
                   onClick={() => {
@@ -5529,10 +5583,10 @@ const HistoryModal = ({ isOpen, onClose, history, onSelect }: { isOpen: boolean,
         </div>
 
         <div className="p-4 bg-white/5 border-t border-white/5 flex justify-between items-center">
-          <p className="text-[8px] text-white/20 uppercase tracking-[0.2em]">Showing last {history.length} results</p>
+          <p className="text-[8px] text-white/20 uppercase tracking-[0.2em]">Showing last {displayHistory.length} results</p>
           <button 
             onClick={() => {
-              if (confirm('Clear all history?')) {
+              if (window.confirm('Clear all history?')) {
                 localStorage.removeItem('osint_scan_history');
                 window.location.reload();
               }
@@ -5546,6 +5600,122 @@ const HistoryModal = ({ isOpen, onClose, history, onSelect }: { isOpen: boolean,
     </motion.div>
   );
 }
+
+const ResultsModal = ({ isOpen, onClose, scanResults }: { isOpen: boolean, onClose: () => void, scanResults: any }) => {
+  if (!isOpen) return null;
+
+  const toolResults = useMemo(() => {
+    if (!scanResults) return [];
+    const results: { name: string, data: any, type: string }[] = [];
+    
+    if (scanResults.social) results.push({ name: 'Social Footprint', data: scanResults.social, type: 'social' });
+    if (scanResults.whois) results.push({ name: 'WHOIS Data', data: scanResults.whois, type: 'json' });
+    if (scanResults.dns) results.push({ name: 'DNS Records', data: scanResults.dns, type: 'json' });
+    if (scanResults.timeline) results.push({ name: 'Wayback Timeline', data: scanResults.timeline, type: 'timeline' });
+    if (scanResults.ghunt) results.push({ name: 'GHunt Results', data: scanResults.ghunt, type: 'json' });
+    if (scanResults.epieos) results.push({ name: 'Epieos Results', data: scanResults.epieos, type: 'json' });
+    if (scanResults.holehe) results.push({ name: 'Holehe Results', data: scanResults.holehe, type: 'json' });
+    
+    return results;
+  }, [scanResults]);
+
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md"
+      onClick={onClose}
+    >
+      <motion.div
+        initial={{ opacity: 0, scale: 0.9, y: 20 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        exit={{ opacity: 0, scale: 0.9, y: 20 }}
+        className="w-full max-w-4xl bg-[#0a0a0a] border border-white/10 shadow-2xl rounded-xl overflow-hidden flex flex-col max-h-[90vh]"
+        onClick={e => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between p-6 border-b border-white/5">
+          <div className="flex items-center gap-3">
+            <BarChart3 className="text-neon-yellow" size={20} />
+            <h2 className="text-xl font-black uppercase tracking-widest text-white">Scan Results Matrix</h2>
+          </div>
+          <button onClick={onClose} className="text-white/20 hover:text-white transition-colors">
+            <X size={20} />
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-6 custom-scrollbar space-y-8">
+          {!scanResults ? (
+            <div className="py-20 text-center opacity-20">
+              <Activity size={48} className="mx-auto mb-4" />
+              <p className="uppercase tracking-[0.2em] text-xs">No active scan results found</p>
+            </div>
+          ) : (
+            <>
+              <div className="flex items-center justify-between border-b border-white/5 pb-4">
+                <div>
+                  <h3 className="text-neon-cyan font-black uppercase tracking-widest text-lg">{scanResults.target}</h3>
+                  <p className="text-[10px] text-white/40 uppercase tracking-widest">Target Intelligence Dossier</p>
+                </div>
+                <div className="text-right">
+                  <p className="text-[10px] text-white/40 uppercase tracking-widest">Scan Timestamp</p>
+                  <p className="text-xs font-mono text-white/60">{new Date(scanResults.timestamp).toLocaleString()}</p>
+                </div>
+              </div>
+
+              <div className="space-y-6">
+                {toolResults.map((tool, idx) => (
+                  <div key={idx} className="bg-white/5 border border-white/10 rounded-lg overflow-hidden">
+                    <div className="bg-white/5 px-4 py-2 border-b border-white/10 flex justify-between items-center">
+                      <h4 className="text-[10px] font-black uppercase tracking-widest text-white/80">{tool.name}</h4>
+                      <span className="text-[8px] font-mono text-white/20 uppercase">{tool.type}</span>
+                    </div>
+                      <div className="p-4 overflow-x-auto">
+                        {tool.type === 'social' ? (
+                          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
+                            {tool.data.filter((s: any) => s.status === 'Found' || s.status === 'Possible but Deleted').map((site: any, sIdx: number) => (
+                              <div key={sIdx} className="p-2 bg-neon-lime/5 border border-neon-lime/20 rounded flex flex-col gap-1">
+                                <div className="flex items-center justify-between gap-2">
+                                  <span className="text-[9px] uppercase tracking-tighter text-neon-lime truncate font-black">{site.name}</span>
+                                  {site.followers && (
+                                    <span className="text-[7px] font-mono text-neon-cyan opacity-80">{site.followers}</span>
+                                  )}
+                                </div>
+                                {site.bio && (
+                                  <p className="text-[7px] text-white/30 truncate italic">"{site.bio}"</p>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        ) : tool.type === 'timeline' ? (
+                          <div className="space-y-1">
+                            {tool.data.slice(0, 20).map((entry: any, eIdx: number) => (
+                              <div key={eIdx} className="text-[9px] font-mono text-white/40 flex gap-2">
+                                <span className="text-neon-cyan">[{entry.timestamp}]</span>
+                                <span className="truncate">{entry.url}</span>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <div className="max-h-[300px] overflow-y-auto custom-scrollbar">
+                            <pre className="text-[9px] font-mono text-white/60 leading-tight whitespace-pre-wrap">
+                              {JSON.stringify(tool.data, null, 2).length > 10000 
+                                ? JSON.stringify(tool.data, null, 2).substring(0, 10000) + "\n... [TRUNCATED for performance]"
+                                : JSON.stringify(tool.data, null, 2)}
+                            </pre>
+                          </div>
+                        )}
+                      </div>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+      </motion.div>
+    </motion.div>
+  );
+};
 
 
 const generatePossibleIdentifiers = (target: string) => {
@@ -5622,6 +5792,32 @@ const IntelligenceWindow = React.memo(({
   aiActions,
   openInBrowser
 }: IntelligenceWindowProps) => {
+  const categoryChartData = useMemo(() => {
+    if (!scanResults || !scanResults.social) return [];
+    const categories = ['Social', 'Chat', 'Gaming', 'Dating', 'NSFW', 'Professional', 'Creative', 'Tech', 'Other'];
+    return categories.map(cat => {
+      const found = scanResults.social.filter((s: any) => 
+        s.category === cat && 
+        (s.status === 'Found' || s.status === 'Possible but Deleted') && 
+        !falsePositives.has(s.name)
+      ).length;
+      return { name: cat, count: found };
+    }).filter(d => d.count > 0);
+  }, [scanResults, falsePositives]);
+
+  const statusPieData = useMemo(() => {
+    if (!scanResults || !scanResults.social) return [];
+    const found = scanResults.social.filter((s: any) => 
+      (s.status === 'Found' || s.status === 'Possible but Deleted') && 
+      !falsePositives.has(s.name)
+    ).length;
+    const total = scanResults.social.length;
+    return [
+      { name: 'Identified', value: found, color: '#39FF14' }, // neon-lime
+      { name: 'Not Found', value: total - found, color: '#1a1a1a' }
+    ];
+  }, [scanResults, falsePositives]);
+
   if (!isOpen) return null;
 
   return (
@@ -5876,6 +6072,79 @@ const IntelligenceWindow = React.memo(({
                   </div>
                 )}
 
+                {/* Intelligence Visualization */}
+                {scanResults.social && scanResults.social.length > 0 && (
+                  <div className="space-y-6">
+                    <div className="flex items-center gap-4 border-b border-white/10 pb-4">
+                      <BarChart3 size={20} className="text-neon-cyan" />
+                      <h4 className="text-sm font-black uppercase tracking-[0.3em] text-white">Intelligence_Visualization</h4>
+                    </div>
+                    
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                      <div className="bg-black/40 border border-white/10 p-6 rounded-lg h-[300px] flex flex-col">
+                        <h5 className="text-[10px] font-black uppercase text-white/40 mb-4 tracking-widest">Findings_By_Category</h5>
+                        <div className="flex-1 min-h-0">
+                          <ResponsiveContainer width="100%" height="100%">
+                            <BarChart data={categoryChartData} layout="vertical" margin={{ left: 0, right: 20 }}>
+                              <CartesianGrid strokeDasharray="3 3" stroke="#ffffff10" horizontal={false} />
+                              <XAxis type="number" hide />
+                              <YAxis 
+                                dataKey="name" 
+                                type="category" 
+                                stroke="#ffffff40" 
+                                fontSize={10} 
+                                width={80}
+                                tick={{ fill: '#ffffff60' }}
+                              />
+                              <ChartTooltip 
+                                contentStyle={{ backgroundColor: '#0a0a0a', border: '1px solid #ffffff20', fontSize: '10px' }}
+                                itemStyle={{ color: '#39FF14' }}
+                              />
+                              <Bar dataKey="count" fill="#39FF14" radius={[0, 4, 4, 0]} barSize={20}>
+                                {categoryChartData.map((entry, index) => (
+                                  <Cell key={`cell-${index}`} fill={index % 2 === 0 ? '#39FF14' : '#00F3FF'} />
+                                ))}
+                              </Bar>
+                            </BarChart>
+                          </ResponsiveContainer>
+                        </div>
+                      </div>
+
+                      <div className="bg-black/40 border border-white/10 p-6 rounded-lg h-[300px] flex flex-col">
+                        <h5 className="text-[10px] font-black uppercase text-white/40 mb-4 tracking-widest">Identification_Status</h5>
+                        <div className="flex-1 min-h-0">
+                          <ResponsiveContainer width="100%" height="100%">
+                            <PieChart>
+                              <Pie
+                                data={statusPieData}
+                                cx="50%"
+                                cy="50%"
+                                innerRadius={60}
+                                outerRadius={80}
+                                paddingAngle={5}
+                                dataKey="value"
+                              >
+                                {statusPieData.map((entry, index) => (
+                                  <Cell key={`cell-${index}`} fill={entry.color} stroke="none" />
+                                ))}
+                              </Pie>
+                              <ChartTooltip 
+                                contentStyle={{ backgroundColor: '#0a0a0a', border: '1px solid #ffffff20', fontSize: '10px' }}
+                              />
+                              <Legend 
+                                verticalAlign="bottom" 
+                                height={36} 
+                                iconType="circle"
+                                wrapperStyle={{ fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.1em' }}
+                              />
+                            </PieChart>
+                          </ResponsiveContainer>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
                 {/* Social Footprint */}
                 {scanResults.social && Array.isArray(scanResults.social) && (
                   <div className="space-y-8">
@@ -5884,7 +6153,7 @@ const IntelligenceWindow = React.memo(({
                       <h4 className="text-sm font-black uppercase tracking-[0.3em] text-white">Social_Footprint</h4>
                     </div>
                     <div className="space-y-10">
-                      {['Social', 'Chat', 'Gaming', 'Dating', 'NSFW', 'Professional', 'Creative', 'Tech', 'Other'].map(category => {
+                      {['Social', 'Chat', 'VoIP', 'Texting', 'Gaming', 'Dating', 'NSFW', 'Professional', 'Creative', 'Tech', 'Other'].map(category => {
                         const categorySites = scanResults.social.filter((s: any) => s.category === category);
                         if (categorySites.length === 0) return null;
                         
@@ -5937,6 +6206,25 @@ const IntelligenceWindow = React.memo(({
                                           >
                                             {site.url}
                                           </button>
+                                          {(site.followers || site.posts) && (
+                                            <div className="flex items-center gap-2 mt-1">
+                                              {site.followers && (
+                                                <span className="text-[8px] font-mono text-neon-cyan bg-neon-cyan/10 px-1 rounded uppercase">
+                                                  {site.followers}
+                                                </span>
+                                              )}
+                                              {site.posts && (
+                                                <span className="text-[8px] font-mono text-neon-magenta bg-neon-magenta/10 px-1 rounded uppercase">
+                                                  {site.posts}
+                                                </span>
+                                              )}
+                                            </div>
+                                          )}
+                                          {site.bio && (
+                                            <p className="text-[9px] text-white/40 mt-1 line-clamp-2 leading-tight italic">
+                                              "{site.bio}"
+                                            </p>
+                                          )}
                                         </div>
                                       </div>
                                       <div className="flex items-center gap-3 ml-4">

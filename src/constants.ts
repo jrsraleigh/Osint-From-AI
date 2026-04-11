@@ -2,28 +2,28 @@ import { OSINTTool, ToolGroup } from './types';
 
 export const CATEGORY_SITES = {
   social: [
-    'github.com', 'twitter.com', 'instagram.com', 'reddit.com', 'facebook.com', 'tiktok.com', 'pinterest.com', 'tumblr.com', 'snapchat.com', 'mastodon.social', 'vk.com', 'ok.ru', 'weibo.com', 'zhihu.com', 'tieba.baidu.com', 'mewe.com', 'gab.com', 'gettr.com', 'truthsocial.com', 'bere.al', 'lemon8-app.com', 'threads.net', 'bsky.app', 'cohost.org', 'post.news', 't2.social', 'hive.social', 'counter.social', 'parler.com', 'rumble.com', 'odysee.com', 'bitchute.com', 'dailymotion.com', 'bandcamp.com', 'mixcloud.com', 'discogs.com', 'rateyourmusic.com', '500px.com', 'unsplash.com', 'pexels.com', 'pixabay.com', 'shutterstock.com', 'myportfolio.com', 'canva.com', 'figma.com', 'sketch.com', 'invisionapp.com', 'zeplin.io', 'abstract.com', 'framer.com', 'webflow.com'
+    'github.com', 'twitter.com', 'instagram.com', 'reddit.com', 'facebook.com', 'tiktok.com', 'pinterest.com', 'tumblr.com', 'snapchat.com', 'mastodon.social', 'vk.com', 'ok.ru', 'weibo.com', 'zhihu.com', 'tieba.baidu.com', 'mewe.com', 'gab.com', 'gettr.com', 'truthsocial.com', 'bere.al', 'lemon8-app.com', 'threads.net', 'bsky.app', 'cohost.org', 'post.news', 't2.social', 'hive.social', 'counter.social', 'parler.com', 'rumble.com', 'odysee.com', 'bitchute.com', 'dailymotion.com', 'bandcamp.com', 'mixcloud.com', 'discogs.com', 'rateyourmusic.com', '500px.com', 'unsplash.com', 'pexels.com', 'pixabay.com', 'shutterstock.com', 'myportfolio.com', 'canva.com', 'figma.com', 'sketch.com', 'invisionapp.com', 'zeplin.io', 'abstract.com', 'framer.com', 'webflow.com', 'linkedin.com', 'quora.com', 'flickr.com', 'vimeo.com', 'soundcloud.com', 'behance.net', 'dribbble.com', 'medium.com', 'deviantart.com', 'goodreads.com', 'last.fm', 'letterboxd.com', 'strava.com', 'komoot.com', 'alltrails.com', 'fitbit.com', 'myfitnesspal.com', 'duolingo.com', 'codecademy.com', 'freecodecamp.org', 'khanacademy.org', 'coursera.org', 'udemy.com', 'edx.org', 'skillshare.com'
   ],
   chat: [
-    't.me', 'line.me', 'wechat.com', 'discord.com', 'kik.me', 'snapchat.com', 'icq.im', 'mumble.info', 'teamspeak.com', 'slack.com', 'rocket.chat', 'zulip.com', 'matrix.to', 'element.io', 'gitter.im', 'mattermost.com', 'wire.com', 'threema.ch', 'getsession.org', 'keybase.io'
+    't.me', 'line.me', 'wechat.com', 'discord.com', 'kik.me', 'snapchat.com', 'icq.im', 'mumble.info', 'teamspeak.com', 'slack.com', 'rocket.chat', 'zulip.com', 'matrix.to', 'element.io', 'gitter.im', 'mattermost.com', 'wire.com', 'threema.ch', 'getsession.org', 'keybase.io', 'whatsapp.com', 'messenger.com', 'skype.com', 'viber.com', 'signal.org', 'telegram.org', 'kakao.com', 'zalo.me', 'imo.im', 'botim.me', 'toTok.ai', 'jitsi.org', 'zoom.us', 'google.com/hangouts', 'meet.google.com', 'teams.microsoft.com', 'webex.com', 'bluejeans.com', 'gotomeeting.com', 'discordapp.com', 'guilded.gg', 'revolt.chat', 'chitchat.gg', 'chatstep.com', 'tinychat.com', 'omegle.com', 'emeraldchat.com', 'chatroulette.com', 'bazoocam.org', 'dirtyroulette.com', 'chatrandom.com', 'shagle.com', 'froulette.com', 'camfrog.com', 'paltalk.com', 'raidcall.com', 'ventrilo.com', 'mumble.com', 'teamspeak.org', 'discord.gg', 'groups.google.com', 'groups.yahoo.com', 'discourse.org', 'vanillaforums.com', 'vbulletin.com', 'xenforo.com', 'phpbb.com', 'mybb.com', 'flarum.org', 'nodebb.org', 'viber.me', 'signal.me', 'wa.me', 't.me/s/'
   ],
   dating: [
-    'tinder.com', 'bumble.com', 'hinge.co', 'okcupid.com', 'pof.com', 'match.com', 'zoosk.com', 'badoo.com', 'tagged.com', 'hi5.com', 'meetme.com', 'skout.com', 'lovoo.com', 'jaumo.com', 'mamba.ru', 'ashleymadison.com', 'seeking.com', 'sugarbook.com', 'secretbenefits.com', 'whatsyourprice.com', 'adultfriendfinder.com', 'coffeemeetsbagel.com', 'happn.com', 'grindr.com', 'scruff.com', 'jackd.com', 'hornet.com', 'weareher.com'
+    'tinder.com', 'bumble.com', 'hinge.co', 'okcupid.com', 'pof.com', 'match.com', 'zoosk.com', 'badoo.com', 'tagged.com', 'hi5.com', 'meetme.com', 'skout.com', 'lovoo.com', 'jaumo.com', 'mamba.ru', 'ashleymadison.com', 'seeking.com', 'sugarbook.com', 'secretbenefits.com', 'whatsyourprice.com', 'adultfriendfinder.com', 'coffeemeetsbagel.com', 'happn.com', 'grindr.com', 'scruff.com', 'jackd.com', 'hornet.com', 'weareher.com', 'eharmony.com', 'elitesingles.com', 'silversingles.com', 'christianmingle.com', 'jdate.com', 'blackpeoplemeet.com', 'ourtime.com', 'singleparentmeet.com', 'farmersonly.com', 'academic-singles.com', 'be2.com', 'parship.com', 'edarlin.com', 'meetic.com', 'lexa.nl', 'neu.de', 'loveaholics.com', 'naughtydate.com', 'benaughty.com', 'flirt.com', 'iamnaughty.com', 'casualx.app', 'pure.app', 'feeld.co', '3fun.app', '3somer.app', 'clover.co', 'tastebuds.fm', 'tantanapp.com', 'soulapp.me', 'blued.com', 'growlr.com', 'adam4adam.com', 'squirt.org', 'recon.com', 'fetlife.com', 'kink.com', 'alt.com', 'collarspace.com', 'darkyere.com', 'slayerment.com', 'vampirepassions.com', 'gothicmatch.com', 'emo-dating.com', 'gothscene.com', 'metalhead.dating'
   ],
   financial: [
     'venmo.com', 'cash.app', 'paypal.me', 'revolut.me', 'wise.com', 'zellepay.com', 'stripe.com', 'square.site', 'plaid.com', 'robinhood.com', 'coinbase.com', 'binance.com', 'kraken.com', 'kucoin.com', 'crypto.com', 'metamask.io', 'etherscan.io', 'bscscan.com', 'solscan.io', 'polygonscan.com', 'tradingview.com', 'stocktwits.com', 'seekingalpha.com', 'investing.com', 'marketwatch.com', 'finance.yahoo.com', 'bloomberg.com', 'forbes.com', 'fortune.com', 'cnbc.com', 'businessinsider.com', 'economist.com', 'ft.com', 'wsj.com'
   ],
   nsfw: [
-    'onlyfans.com', 'fansly.com', 'pornhub.com', 'xvideos.com', 'xnxx.com', 'xhamster.com', 'chaturbate.com', 'cam4.com', 'bongacams.com', 'stripchat.com', 'livejasmin.com', 'manyvids.com', 'clips4sale.com', 'iwantclips.com', 'loyalfans.com', 'pocketstars.com', 'fapello.com', 'thothub.to', 'coomer.party', 'kemono.party', 'simpcity.su', 'vipergirls.to', 'planetsuzy.org', 'adultwork.com', 'escort-directory.com', 'eurogirlsescort.com', 'slixa.com', 'eros.com', 'yesbackpage.com', 'bedpage.com', 'cityxguide.com', 'rubratings.com', 'massageanywhere.com', 'listcrawler.com', 'skipthegames.com', 'megapersons.com', 'locanto.com', 'doublelist.com', 'squirt.org', 'adam4adam.com', 'fetlife.com', 'recon.com', 'kink.com', 'modelmayhem.com', 'purpleport.com', 'starnow.com', 'castingcall.club', 'backstage.com'
+    'onlyfans.com', 'fansly.com', 'pornhub.com', 'xvideos.com', 'xnxx.com', 'xhamster.com', 'chaturbate.com', 'cam4.com', 'bongacams.com', 'stripchat.com', 'livejasmin.com', 'manyvids.com', 'clips4sale.com', 'iwantclips.com', 'loyalfans.com', 'pocketstars.com', 'fapello.com', 'thothub.to', 'coomer.party', 'kemono.party', 'simpcity.su', 'vipergirls.to', 'planetsuzy.org', 'adultwork.com', 'escort-directory.com', 'eurogirlsescort.com', 'slixa.com', 'eros.com', 'yesbackpage.com', 'bedpage.com', 'cityxguide.com', 'rubratings.com', 'massageanywhere.com', 'listcrawler.com', 'skipthegames.com', 'megapersons.com', 'locanto.com', 'doublelist.com', 'squirt.org', 'adam4adam.com', 'fetlife.com', 'recon.com', 'kink.com', 'modelmayhem.com', 'purpleport.com', 'starnow.com', 'castingcall.club', 'backstage.com', 'redtube.com', 'youporn.com', 'tube8.com', 'spankbang.com', 'eporner.com', 'tnaflix.com', 'motherless.com', 'heavy-r.com', 'efukt.com', 'documentingreality.com', 'theync.com', 'kaotic.com', 'goregrish.com', 'crazyshit.com', 'rule34.xxx', 'gelbooru.com', 'danbooru.donmai.us', 'e621.net', 'furaffinity.net', 'inkbunny.net', 'pixiv.net', 'hentai-foundry.com', 'nhentai.net', 'hitomi.la', 'tsumino.com', 'pururin.to', 'e-hentai.org', 'hanime.tv', 'hentaihaven.xxx', 'multporn.net', '8muses.com', 'doujins.com'
   ],
   gaming: [
     'steamcommunity.com', 'xboxgamertag.com', 'psnprofiles.com', 'nintendo.com', 'epicgames.com', 'roblox.com', 'namemc.com', 'twitch.tv', 'kick.com', 'trovo.live', 'dlive.tv', 'battle.net', 'origin.com', 'uplay.com', 'gog.com', 'itch.io', 'gamejolt.com', 'nexusmods.com', 'curseforge.com', 'speedrun.com', 'tracker.gg', 'op.gg', 'faceit.com', 'play.esea.net', 'challengermode.com', 'battlefy.com', 'smash.gg', 'liquipedia.net', 'anilist.co', 'kitsu.io'
   ],
   voip: [
-    'skype.com', 'viber.com', 'wa.me', 'signal.me', 'zello.me', 'voxer.com', 'voice.google.com'
+    'skype.com', 'viber.com', 'wa.me', 'signal.me', 'zello.me', 'voxer.com', 'voice.google.com', 'whatsapp.com', 'telegram.org', 'line.me', 'wechat.com', 'kakao.com', 'zalo.me', 'imo.im', 'botim.me', 'toTok.ai', 'signal.org', 'discord.com', 'slack.com', 'teams.microsoft.com', 'zoom.us', 'webex.com', 'bluejeans.com', 'gotomeeting.com', 'ringcentral.com', '8x8.com', 'vonage.com', 'dialpad.com', 'grasshopper.com', 'ooma.com', 'magicjack.com', 'net2phone.com', 'intermedia.com', 'nextiva.com', 'fuze.com', 'starleaf.com', 'lifesize.com', 'pumble.com', 'flock.com', 'ryver.com', 'twist.com', 'fleep.io', 'troopmessenger.com', 'brosix.com', 'outputmessenger.com', 'messenger.com', 'facebook.com/messenger', 'instagram.com/direct', 'twitter.com/messages', 'linkedin.com/messaging', 'snapchat.com/chat', 'tiktok.com/messages', 'reddit.com/chat', 'quora.com/messages', 'tumblr.com/messages', 'pinterest.com/messages', 'flickr.com/messages', 'vimeo.com/messages', 'soundcloud.com/messages', 'behance.net/messages', 'dribbble.com/messages', 'medium.com/messages', 'deviantart.com/messages', 'goodreads.com/messages', 'last.fm/messages', 'letterboxd.com/messages', 'strava.com/messages', 'komoot.com/messages', 'alltrails.com/messages', 'fitbit.com/messages', 'myfitnesspal.com/messages', 'duolingo.com/messages'
   ],
   texting: [
-    'textnow.com', 'textfree.us', 'sideline.com', 'burnerapp.com', 'hushed.com'
+    'textnow.com', 'textfree.us', 'sideline.com', 'burnerapp.com', 'hushed.com', 'pinger.com', 'textplus.com', 'talkatone.com', 'dingtone.me', 'telosapp.com', 'freetone.com', 'textmeup.com', '2ndline.co', 'flyp.com', 'grooveip.com', 'line2.com', 'grasshopper.com', 'mightytext.net', 'pushbullet.com', 'joinjoaomgcd.appspot.com'
   ],
   selling: [
     'ebay.com', 'etsy.com', 'amazon.com', 'poshmark.com', 'mercari.com', 'depop.com', 'vinted.com', 'grailed.com', 'stockx.com', 'goat.com', 'offerup.com', 'letgo.com', 'craigslist.org', 'facebook.com', 'myshopify.com', 'mybigcommerce.com', 'gumroad.com', 'ko-fi.com', 'patreon.com', 'buymeacoffee.com', 'fanbox.cc', 'subscribestar.com', 'sellfy.com', 'payhip.com', 'sendowl.com', 'fetchapp.com'
@@ -162,7 +162,7 @@ export const OSINT_TOOLS: OSINTTool[] = [
   {
     id: '77',
     name: 'Deep Social Scan',
-    description: 'Automated search across top 40+ social media platforms.',
+    description: 'Automated search across top 75+ social media platforms.',
     url: 'https://www.google.com/search?q="{query}"',
     searchUrl: `https://www.google.com/search?q="{query}"+(${CATEGORY_SITES.social.map(s => 'site:' + s).join('+OR+')})`,
     category: 'Social Media',
@@ -172,7 +172,7 @@ export const OSINT_TOOLS: OSINTTool[] = [
   {
     id: '78',
     name: 'Deep Chat Scan',
-    description: 'Automated search across top 25+ chat and messaging platforms.',
+    description: 'Automated search across top 75+ chat and messaging platforms.',
     url: 'https://www.google.com/search?q="{query}"',
     searchUrl: `https://www.google.com/search?q="{query}"+(${CATEGORY_SITES.chat.map(s => 'site:' + s).join('+OR+')})`,
     category: 'Social Media',
@@ -182,7 +182,7 @@ export const OSINT_TOOLS: OSINTTool[] = [
   {
     id: '79',
     name: 'Deep Dating Scan',
-    description: 'Automated search across top 30+ dating platforms.',
+    description: 'Automated search across top 75+ dating platforms.',
     url: 'https://www.google.com/search?q="{query}"',
     searchUrl: `https://www.google.com/search?q="{query}"+(${CATEGORY_SITES.dating.map(s => 'site:' + s).join('+OR+')})`,
     category: 'Social Media',
@@ -202,7 +202,7 @@ export const OSINT_TOOLS: OSINTTool[] = [
   {
     id: '81',
     name: 'Deep NSFW Scan',
-    description: 'Automated search across top 50+ NSFW and adult platforms.',
+    description: 'Automated search across top 75+ NSFW and adult platforms.',
     url: 'https://www.google.com/search?q="{query}"',
     searchUrl: `https://www.google.com/search?q="{query}"+(${CATEGORY_SITES.nsfw.map(s => 'site:' + s).join('+OR+')})`,
     category: 'Social Media',
@@ -222,7 +222,7 @@ export const OSINT_TOOLS: OSINTTool[] = [
   {
     id: '83',
     name: 'Deep VOIP Scan',
-    description: 'Automated search across top 20+ VOIP and communication platforms.',
+    description: 'Automated search across top 75+ VOIP and communication platforms.',
     url: 'https://www.google.com/search?q="{query}"',
     searchUrl: `https://www.google.com/search?q="{query}"+(${CATEGORY_SITES.voip.map(s => 'site:' + s).join('+OR+')})`,
     category: 'Social Media',

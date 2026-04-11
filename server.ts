@@ -11,7 +11,7 @@ import pLimit from 'p-limit';
 
 // Configure axios retry
 axiosRetry(axios, { 
-  retries: 2, 
+  retries: 3, 
   retryDelay: axiosRetry.exponentialDelay,
   retryCondition: (error) => {
     return axiosRetry.isNetworkOrIdempotentRequestError(error) || error.response?.status === 429;
@@ -407,8 +407,8 @@ async function startServer() {
     }
   });
 
-  const searchLimit = pLimit(15); // Increased concurrency
-  const socialLimit = pLimit(50); // Increased concurrency for social scans
+  const searchLimit = pLimit(8); // Further reduced concurrency
+  const socialLimit = pLimit(10); // Further reduced concurrency for social scans
   
   const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -537,7 +537,7 @@ async function startServer() {
             'Upgrade-Insecure-Requests': '1',
             'Cache-Control': 'max-age=0'
           },
-          timeout: 15000,
+          timeout: 30000,
           validateStatus: (status) => status < 500 // Don't throw on 429 or 414
         }));
         
@@ -594,7 +594,7 @@ async function startServer() {
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
             'Referer': 'https://duckduckgo.com/'
           },
-          timeout: 10000
+          timeout: 20000
         }));
         const $ddg = cheerio.load(ddgResponse.data);
         $ddg('.result').each((i, el) => {
@@ -625,7 +625,7 @@ async function startServer() {
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
             'Referer': 'https://www.bing.com/'
           },
-          timeout: 10000
+          timeout: 20000
         }));
         const $bing = cheerio.load(bingResponse.data);
         $bing('.b_algo').each((i, el) => {
@@ -653,7 +653,7 @@ async function startServer() {
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
             'Referer': 'https://search.yahoo.com/'
           },
-          timeout: 10000
+          timeout: 20000
         }));
         const $yahoo = cheerio.load(yahooResponse.data);
         $yahoo('.algo-sr').each((i, el) => {
@@ -748,7 +748,7 @@ async function startServer() {
           'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
           'Accept-Language': 'en-US,en;q=0.9'
         },
-        timeout: 15000,
+        timeout: 30000,
         validateStatus: () => true
       });
       
@@ -857,9 +857,16 @@ async function startServer() {
         metadata,
         results: results.slice(0, 100) // Limit to 100 items for performance
       });
-    } catch (error) {
+    } catch (error: any) {
       console.error('Proxy tool error:', error.message || error);
-      res.status(500).json({ error: 'Failed to proxy tool' });
+      const isTimeout = error.code === 'ECONNABORTED' || error.message?.includes('timeout');
+      const isDnsError = error.code === 'EAI_AGAIN' || error.code === 'ENOTFOUND';
+      
+      res.status(500).json({ 
+        error: isTimeout ? 'Request timed out. The target site might be slow or blocking our connection.' :
+               isDnsError ? 'DNS resolution failed. The target domain might be invalid or temporarily unreachable.' :
+               'Failed to proxy tool: ' + (error.message || 'Unknown error')
+      });
     }
   });
 
@@ -1040,6 +1047,16 @@ async function startServer() {
       { name: 'Burner', url: `https://burnerapp.com/u/${username}`, category: 'Texting' },
       { name: 'Hushed', url: `https://hushed.com/u/${username}`, category: 'Texting' },
       { name: 'GoogleVoice', url: `https://voice.google.com/u/0/search?q=${username}`, category: 'VoIP' },
+      { name: 'Talkatone', url: `https://talkatone.com/u/${username}`, category: 'VoIP' },
+      { name: 'Dingtone', url: `https://dingtone.me/u/${username}`, category: 'VoIP' },
+      { name: 'Pinger', url: `https://pinger.com/u/${username}`, category: 'VoIP' },
+      { name: 'SecondLine', url: `https://2ndline.co/u/${username}`, category: 'VoIP' },
+      { name: 'Phoner', url: `https://phonerapp.com/u/${username}`, category: 'VoIP' },
+      { name: 'YouMail', url: `https://youmail.com/u/${username}`, category: 'VoIP' },
+      { name: 'TrapCall', url: `https://trapcall.com/u/${username}`, category: 'VoIP' },
+      { name: 'Truecaller', url: `https://truecaller.com/u/${username}`, category: 'VoIP' },
+      { name: 'Grasshopper', url: `https://grasshopper.com/u/${username}`, category: 'VoIP' },
+      { name: 'RingCentral', url: `https://ringcentral.com/u/${username}`, category: 'VoIP' },
       { name: 'Kik', url: `https://kik.me/${username}`, category: 'Chat' },
       { name: 'Snapchat', url: `https://snapchat.com/add/${username}`, category: 'Chat' },
       { name: 'ICQ', url: `https://icq.im/${username}`, category: 'Chat' },
@@ -1621,6 +1638,84 @@ async function startServer() {
       { name: 'CockyBoys', url: `https://www.cockyboys.com/profile/${username}`, category: 'NSFW' },
       { name: 'TreasureIslandMedia', url: `https://www.treasureislandmedia.com/profile/${username}`, category: 'NSFW' },
       
+      // Additional Social & Chat
+      { name: 'Mastodon', url: `https://mastodon.social/@${username}`, category: 'Social' },
+      { name: 'Threads', url: `https://www.threads.net/@${username}`, category: 'Social' },
+      { name: 'Bluesky', url: `https://bsky.app/profile/${username}`, category: 'Social' },
+      { name: 'VK', url: `https://vk.com/${username}`, category: 'Social' },
+      { name: 'OK.ru', url: `https://ok.ru/${username}`, category: 'Social' },
+      { name: 'Weibo', url: `https://weibo.com/${username}`, category: 'Social' },
+      { name: 'Gab', url: `https://gab.com/${username}`, category: 'Social' },
+      { name: 'Gettr', url: `https://gettr.com/${username}`, category: 'Social' },
+      { name: 'TruthSocial', url: `https://truthsocial.com/@${username}`, category: 'Social' },
+      { name: 'BeReal', url: `https://bere.al/${username}`, category: 'Social' },
+      { name: 'Lemon8', url: `https://www.lemon8-app.com/${username}`, category: 'Social' },
+      { name: 'Mewe', url: `https://mewe.com/i/${username}`, category: 'Social' },
+      { name: 'Parler', url: `https://parler.com/profile/${username}`, category: 'Social' },
+      { name: 'Rumble', url: `https://rumble.com/user/${username}`, category: 'Social' },
+      { name: 'Odysee', url: `https://odysee.com/@${username}`, category: 'Social' },
+      { name: 'Bitchute', url: `https://www.bitchute.com/channel/${username}`, category: 'Social' },
+      { name: 'Dailymotion', url: `https://www.dailymotion.com/${username}`, category: 'Social' },
+      
+      // Additional Dating
+      { name: 'eHarmony', url: `https://www.eharmony.com/profile/${username}`, category: 'Dating' },
+      { name: 'EliteSingles', url: `https://www.elitesingles.com/profile/${username}`, category: 'Dating' },
+      { name: 'SilverSingles', url: `https://www.silversingles.com/profile/${username}`, category: 'Dating' },
+      { name: 'ChristianMingle', url: `https://www.christianmingle.com/profile/${username}`, category: 'Dating' },
+      { name: 'JDate', url: `https://www.jdate.com/profile/${username}`, category: 'Dating' },
+      { name: 'BlackPeopleMeet', url: `https://www.blackpeoplemeet.com/profile/${username}`, category: 'Dating' },
+      { name: 'OurTime', url: `https://www.ourtime.com/profile/${username}`, category: 'Dating' },
+      { name: 'Farmersonly', url: `https://www.farmersonly.com/profile/${username}`, category: 'Dating' },
+      { name: 'Feeld', url: `https://feeld.co/user/${username}`, category: 'Dating' },
+      { name: 'Pure', url: `https://pure.app/user/${username}`, category: 'Dating' },
+      { name: 'CasualX', url: `https://casualx.app/user/${username}`, category: 'Dating' },
+      { name: 'Tantan', url: `https://tantanapp.com/user/${username}`, category: 'Dating' },
+      { name: 'Soul', url: `https://soulapp.me/user/${username}`, category: 'Dating' },
+      { name: 'Blued', url: `https://www.blued.com/user/${username}`, category: 'Dating' },
+      
+      // Additional NSFW
+      { name: 'RedTube', url: `https://www.redtube.com/users/${username}`, category: 'NSFW' },
+      { name: 'YouPorn', url: `https://www.youporn.com/users/${username}`, category: 'NSFW' },
+      { name: 'Tube8', url: `https://www.tube8.com/users/${username}`, category: 'NSFW' },
+      { name: 'Eporner', url: `https://www.eporner.com/profile/${username}`, category: 'NSFW' },
+      { name: 'TNAFlix', url: `https://www.tnaflix.com/profile/${username}`, category: 'NSFW' },
+      { name: 'Motherless', url: `https://motherless.com/u/${username}`, category: 'NSFW' },
+      { name: 'Heavy-R', url: `https://www.heavy-r.com/user/${username}`, category: 'NSFW' },
+      { name: 'EFukt', url: `https://efukt.com/user/${username}`, category: 'NSFW' },
+      { name: 'TheYNC', url: `https://theync.com/user/${username}`, category: 'NSFW' },
+      { name: 'Kaotic', url: `https://www.kaotic.com/user/${username}`, category: 'NSFW' },
+      { name: 'GoreGrish', url: `https://goregrish.com/user/${username}`, category: 'NSFW' },
+      { name: 'Rule34', url: `https://rule34.xxx/index.php?page=account&s=profile&uname=${username}`, category: 'NSFW' },
+      { name: 'Gelbooru', url: `https://gelbooru.com/index.php?page=account&s=profile&uname=${username}`, category: 'NSFW' },
+      { name: 'Danbooru', url: `https://danbooru.donmai.us/users/${username}`, category: 'NSFW' },
+      { name: 'E621', url: `https://e621.net/users/${username}`, category: 'NSFW' },
+      { name: 'FurAffinity', url: `https://www.furaffinity.net/user/${username}`, category: 'NSFW' },
+      { name: 'Inkbunny', url: `https://inkbunny.net/${username}`, category: 'NSFW' },
+      { name: 'Hentai-Foundry', url: `https://www.hentai-foundry.com/user/${username}`, category: 'NSFW' },
+      { name: 'NHentai', url: `https://nhentai.net/users/${username}`, category: 'NSFW' },
+      { name: 'Hitomi.la', url: `https://hitomi.la/users/${username}`, category: 'NSFW' },
+      { name: 'Tsumino', url: `https://www.tsumino.com/users/${username}`, category: 'NSFW' },
+      { name: 'Pururin', url: `https://pururin.to/users/${username}`, category: 'NSFW' },
+      { name: 'E-Hentai', url: `https://e-hentai.org/u/${username}`, category: 'NSFW' },
+      { name: 'HAnime', url: `https://hanime.tv/users/${username}`, category: 'NSFW' },
+      { name: 'HentaiHaven', url: `https://hentaihaven.xxx/users/${username}`, category: 'NSFW' },
+      { name: 'MultPorn', url: `https://multporn.net/users/${username}`, category: 'NSFW' },
+      { name: '8Muses', url: `https://www.8muses.com/user/${username}`, category: 'NSFW' },
+      { name: 'Doujins', url: `https://doujins.com/users/${username}`, category: 'NSFW' },
+      { name: 'Fanvue', url: `https://fanvue.com/${username}`, category: 'NSFW' },
+      { name: 'ModelCenter', url: `https://modelcenter.com/${username}`, category: 'NSFW' },
+      { name: 'PocketStars', url: `https://pocketstars.com/${username}`, category: 'NSFW' },
+      { name: 'AVNStars', url: `https://stars.avn.com/${username}`, category: 'NSFW' },
+      { name: 'JustFor.Fans', url: `https://justfor.fans/${username}`, category: 'NSFW' },
+      { name: 'Slushy', url: `https://slushy.com/${username}`, category: 'NSFW' },
+      { name: 'My.Club', url: `https://my.club/${username}`, category: 'NSFW' },
+      { name: 'AdultNode', url: `https://adultnode.com/${username}`, category: 'NSFW' },
+      { name: 'AllMyLinks', url: `https://allmylinks.com/${username}`, category: 'NSFW' },
+      { name: 'Linktree', url: `https://linktr.ee/${username}`, category: 'NSFW' },
+      { name: 'Beacons', url: `https://beacons.ai/${username}`, category: 'NSFW' },
+      { name: 'Campsite', url: `https://campsite.bio/${username}`, category: 'NSFW' },
+      { name: 'Milkshake', url: `https://msha.ke/${username}`, category: 'NSFW' },
+      { name: 'Solo.to', url: `https://solo.to/${username}`, category: 'NSFW' },
     ];
 
     // Deduplicate sites by name to prevent React key errors
@@ -1658,16 +1753,17 @@ async function startServer() {
           try {
             await sleep(Math.random() * 200 + 50); // Reduced jitter for faster scans
             const response = await axios.get(site.url, { 
-              timeout: 6000, // Reduced timeout per site
+              timeout: 8000, 
+              maxContentLength: 500000, // Limit to 500KB to save memory
               validateStatus: () => true,
-          headers: {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Accept-Language': 'en-US,en;q=0.9',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-            'Cache-Control': 'no-cache',
-            'Pragma': 'no-cache'
-          }
-        });
+              headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept-Language': 'en-US,en;q=0.9',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+                'Cache-Control': 'no-cache',
+                'Pragma': 'no-cache'
+              }
+            });
         
         // Improved detection logic
         let isFound = response.status === 200;
@@ -1841,57 +1937,76 @@ async function startServer() {
         // Basic Profile Extraction for popular sites
         let bio = '';
         let followers = '';
+        let posts = '';
         let avatar = '';
 
         if (isFound) {
           const $ = cheerio.load(body);
+          const metaDesc = $('meta[name="description"]').attr('content') || '';
+          const ogDesc = $('meta[property="og:description"]').attr('content') || '';
+          const ogImage = $('meta[property="og:image"]').attr('content') || '';
+          
+          avatar = ogImage;
+
           if (site.name === 'GitHub') {
             bio = $('.p-note.user-profile-bio').text().trim();
             followers = $('.Link--secondary.no-underline.no-wrap').first().text().trim();
-            avatar = $('.avatar.avatar-user').attr('src') || '';
-          } else if (site.name === 'Twitter') {
-            bio = $('meta[name="description"]').attr('content') || '';
-            avatar = $('meta[property="og:image"]').attr('content') || '';
+            avatar = $('.avatar.avatar-user').attr('src') || avatar;
+            const repoCount = $('.Counter').first().text().trim();
+            if (repoCount) posts = `${repoCount} Repos`;
+          } else if (site.name === 'Twitter' || site.name === 'x.com') {
+            bio = metaDesc.replace(/^The latest Tweets from .*?\(@.*?\)\. /, '');
+            const followMatch = body.match(/(\d+[,.]?\d*[KMB]?)\s*Followers/i);
+            if (followMatch) followers = followMatch[1];
           } else if (site.name === 'Instagram') {
-            bio = $('meta[property="og:description"]').attr('content') || '';
-            avatar = $('meta[property="og:image"]').attr('content') || '';
+            const parts = ogDesc.split(' - ')[0]?.split(', ');
+            if (parts && parts.length >= 3) {
+              followers = parts[0].replace(' Followers', '');
+              posts = parts[2].replace(' Posts', '');
+            }
+            bio = ogDesc.split(' - ')[1] || '';
           } else if (site.name === 'Reddit') {
-            bio = $('meta[name="description"]').attr('content') || '';
-            avatar = $('meta[property="og:image"]').attr('content') || '';
-            // Attempt to get karma from meta or body
+            bio = metaDesc;
             const karmaMatch = body.match(/(\d+[,.]?\d*)\s*karma/i);
             if (karmaMatch) followers = `${karmaMatch[1]} Karma`;
           } else if (site.name === 'YouTube') {
-            bio = $('meta[name="description"]').attr('content') || '';
-            avatar = $('meta[property="og:image"]').attr('content') || '';
+            bio = metaDesc;
             const subMatch = body.match(/(\d+[,.]?\d*[KMB]?)\s*subscribers/i);
-            if (subMatch) followers = `${subMatch[1]} Subscribers`;
+            if (subMatch) followers = `${subMatch[1]} Subs`;
           } else if (site.name === 'TikTok') {
-            bio = $('meta[name="description"]').attr('content') || '';
-            avatar = $('meta[property="og:image"]').attr('content') || '';
-            const followMatch = body.match(/(\d+[,.]?\d*[KMB]?)\s*Followers/i);
-            if (followMatch) followers = `${followMatch[1]} Followers`;
+            const statsMatch = metaDesc.match(/([\d.KMB]+)\s*Likes\.\s*([\d.KMB]+)\s*Followers/i);
+            if (statsMatch) {
+              followers = statsMatch[2];
+              posts = `${statsMatch[1]} Likes`;
+            }
+            bio = metaDesc.split('|')[0]?.trim() || '';
           } else if (site.name === 'Pinterest') {
-            bio = $('meta[name="description"]').attr('content') || '';
-            avatar = $('meta[property="og:image"]').attr('content') || '';
-            const followMatch = body.match(/(\d+[,.]?\d*[KMB]?)\s*followers/i);
-            if (followMatch) followers = `${followMatch[1]} Followers`;
+            bio = metaDesc;
+            const followMatch = body.match(/([\d.KMB]+)\s*followers/i);
+            if (followMatch) followers = followMatch[1];
           } else if (site.name === 'Twitch') {
-            bio = $('meta[name="description"]').attr('content') || '';
-            avatar = $('meta[property="og:image"]').attr('content') || '';
-            const followMatch = body.match(/(\d+[,.]?\d*[KMB]?)\s*followers/i);
-            if (followMatch) followers = `${followMatch[1]} Followers`;
+            bio = metaDesc;
+            const followMatch = body.match(/([\d.KMB]+)\s*followers/i);
+            if (followMatch) followers = followMatch[1];
           } else if (site.name === 'Steam') {
             bio = $('.profile_summary').text().trim();
-            avatar = $('.playerAvatarAutoSizeInner img').attr('src') || '';
+            avatar = $('.playerAvatarAutoSizeInner img').attr('src') || avatar;
             const levelMatch = $('.friendPlayerLevelNum').text().trim();
             if (levelMatch) followers = `Level ${levelMatch}`;
-          } else if (site.name === 'Medium') {
-            bio = $('meta[name="description"]').attr('content') || '';
-            avatar = $('meta[property="og:image"]').attr('content') || '';
-          } else if (site.name === 'SoundCloud') {
-            bio = $('meta[name="description"]').attr('content') || '';
-            avatar = $('meta[property="og:image"]').attr('content') || '';
+          } else if (site.name === 'Telegram') {
+            bio = $('.tgme_page_description').text().trim() || ogDesc;
+            const extra = $('.tgme_page_extra').text().trim();
+            if (extra) followers = extra;
+          } else if (site.name === 'Snapchat') {
+            bio = metaDesc;
+          } else if (site.name === 'Facebook') {
+            bio = metaDesc;
+            const followMatch = body.match(/([\d.KMB]+)\s*people follow this/i);
+            if (followMatch) followers = followMatch[1];
+          } else if (site.name === 'Discord') {
+            bio = metaDesc;
+          } else {
+            bio = metaDesc || ogDesc;
           }
         }
 
@@ -1901,8 +2016,9 @@ async function startServer() {
           category: site.category,
           status: finalStatus,
           confidence: isFound ? confidence : 0,
-          bio,
+          bio: bio.length > 200 ? bio.substring(0, 200) + '...' : bio,
           followers,
+          posts,
           avatar
         };
       } catch (error) {
