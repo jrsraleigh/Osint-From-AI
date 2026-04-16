@@ -100,6 +100,8 @@ interface IntelligenceWindowProps {
   aiSuggestions: {name: string, reason: string, directLink?: string}[];
   aiActions: string[];
   openInBrowser: (url: string) => void;
+  onShowHistory: () => void;
+  onShowResults: () => void;
 }
 
 interface StatusWindowProps {
@@ -701,7 +703,6 @@ function App() {
   const [selectedGroup, setSelectedGroup] = useState<string>('');
   const [workflowProgress, setWorkflowProgress] = useState<Record<string, boolean>>({});
   const [currentlyRunningToolId, setCurrentlyRunningToolId] = useState<string | null>(null);
-  const [historicalTimeline, setHistoricalTimeline] = useState<any>(null);
   const [isTimelineLoading, setIsTimelineLoading] = useState(false);
   const [intelFeed, setIntelFeed] = useState<any[]>([]);
   const [isIntelLoading, setIsIntelLoading] = useState(false);
@@ -1721,7 +1722,6 @@ function App() {
     setActiveTab('Scan');
     if (!scanResults || scanResults.target !== searchQuery) {
       setScanResults(null);
-      setHistoricalTimeline(null);
     }
 
     let results: any = null;
@@ -1775,24 +1775,29 @@ function App() {
       results.whois = whoisRes;
       results.dns = dnsRes;
 
-      setScanResults(results);
-      
-      // Prune results for history to stay within localStorage limits
-      const prunedResults = { ...results };
-      if (prunedResults.social && Array.isArray(prunedResults.social)) {
-        prunedResults.social = prunedResults.social.filter((s: any) => 
-          s.status === 'Found' || s.status === 'Possible but Deleted'
-        ).slice(0, 200);
-      }
+      setScanResults(prev => {
+        const updated = { ...prev, ...results };
+        
+        // Prune social results for history to stay within localStorage limits
+        const historyResults = { ...updated };
+        if (historyResults.social && Array.isArray(historyResults.social)) {
+          historyResults.social = historyResults.social.filter((s: any) => 
+            s.status === 'Found' || s.status === 'Possible but Deleted'
+          ).slice(0, 200);
+        }
 
-      const historyItem = {
-        timestamp: results.timestamp,
-        query: searchQuery,
-        isDeep: true,
-        results: prunedResults
-      };
-      setScanHistory(prev => [historyItem, ...prev].slice(0, 10));
-      if (timelineRes) setHistoricalTimeline(timelineRes);
+        const historyItem = {
+          timestamp: results.timestamp,
+          query: searchQuery,
+          isDeep: true,
+          results: historyResults
+        };
+        
+        console.log('Saving historical scan to history:', historyItem);
+        setScanHistory(h => [historyItem, ...h].slice(0, 10));
+        
+        return updated;
+      });
       
     } catch (error) {
       console.error('Historical scan failed:', error);
@@ -2008,23 +2013,29 @@ function App() {
         }
       }
 
-      setScanResults(prev => ({ ...prev, ...results }));
-      
-      // Prune results for history to stay within localStorage limits
-      const prunedResults = { ...results };
-      if (prunedResults.social && Array.isArray(prunedResults.social)) {
-        prunedResults.social = prunedResults.social.filter((s: any) => 
-          s.status === 'Found' || s.status === 'Possible but Deleted'
-        ).slice(0, 200); // Limit to 200 found profiles
-      }
+      setScanResults(prev => {
+        const updated = { ...prev, ...results };
+        
+        // Prune social results for history to stay within localStorage limits
+        const historyResults = { ...updated };
+        if (historyResults.social && Array.isArray(historyResults.social)) {
+          historyResults.social = historyResults.social.filter((s: any) => 
+            s.status === 'Found' || s.status === 'Possible but Deleted'
+          ).slice(0, 200);
+        }
 
-      const historyItem = {
-        timestamp: results.timestamp,
-        query: searchQuery,
-        isDeep: deep,
-        results: prunedResults
-      };
-      setScanHistory(prev => [historyItem, ...prev].slice(0, 10));
+        const historyItem = {
+          timestamp: results.timestamp,
+          query: searchQuery,
+          isDeep: deep,
+          results: historyResults
+        };
+        
+        console.log('Saving to scan history:', historyItem);
+        setScanHistory(h => [historyItem, ...h].slice(0, 10));
+        
+        return updated;
+      });
     } catch (error) {
       console.error('Scan failed:', error);
     } finally {
@@ -2109,15 +2120,12 @@ function App() {
     if (toolId === '61') { // Wayback Timeline
       setIsTimelineLoading(true);
       setActiveTab('Scan');
-      try {
-        const res = await fetch(`/api/osint/wayback-timeline?url=${encodeURIComponent(searchQuery)}`);
-        const data = await res.json();
-        setHistoricalTimeline(data);
-      } catch (error) {
-        console.error('Timeline fetch failed:', error);
-      } finally {
+      const api = `/api/osint/wayback-timeline?url=${encodeURIComponent(searchQuery)}`;
+      runTool('Wayback Timeline', api, '61', 'Breach & History').then(() => {
         setIsTimelineLoading(false);
-      }
+      }).catch(() => {
+        setIsTimelineLoading(false);
+      });
       return;
     }
 
@@ -2313,6 +2321,12 @@ function App() {
     }
 
     const workflowId = addRunningTool(`WORKFLOW: ${group.name}`, 'workflow', 'Workflow');
+    const localResults: any = {
+      target: searchQuery,
+      timestamp: new Date().toISOString(),
+      type: searchQuery.includes('.') && !searchQuery.includes('@') ? 'Domain' : searchQuery.includes('@') ? 'Email' : 'Username',
+      workflowResults: {}
+    };
 
     // Run tools sequentially with a small delay to avoid rate limiting
     for (const id of group.toolIds) {
@@ -2372,7 +2386,10 @@ function App() {
         }
       }
 
-      await runTool(tool.name, api, id, tool.category);
+      const data = await runTool(tool.name, api, id, tool.category);
+      if (data) {
+        localResults.workflowResults[id] = { results: data, url: api };
+      }
       setWorkflowProgress(prev => ({ ...prev, [id]: true }));
       
       // Add a small jittered delay between tools
@@ -2382,6 +2399,16 @@ function App() {
     setCurrentlyRunningToolId(null);
     setIsScanning(false);
     updateToolStatus(workflowId, { status: 'completed', progress: 100, results: 'Workflow finished' });
+    
+    // Save to scan history
+    const historyItem = {
+      timestamp: localResults.timestamp,
+      query: localResults.target,
+      isDeep: true,
+      results: localResults
+    };
+    console.log('Saving workflow scan to history:', historyItem);
+    setScanHistory(prev => [historyItem, ...prev].slice(0, 10));
   };
 
   const handleLaunchSingleInWorkflow = async (toolId: string) => {
@@ -2504,17 +2531,19 @@ function App() {
             </button>
             <button 
               onClick={() => setIsHistoryOpen(true)}
-              className="p-2 rounded-lg bg-white/5 hover:bg-white/10 transition-colors text-white/40 hover:text-neon-magenta"
+              className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 transition-all text-white/40 hover:text-neon-magenta group"
               title="Target History"
             >
-              <Clock size={14} />
+              <Clock size={14} className="group-hover:scale-110 transition-transform" />
+              <span className="text-[10px] font-bold uppercase tracking-widest hidden sm:inline">History</span>
             </button>
             <button 
               onClick={() => setIsResultsOpen(true)}
-              className="p-2 rounded-lg bg-white/5 hover:bg-white/10 transition-colors text-white/40 hover:text-neon-yellow"
+              className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 transition-all text-white/40 hover:text-neon-yellow group"
               title="All Results"
             >
-              <BarChart3 size={14} />
+              <BarChart3 size={14} className="group-hover:scale-110 transition-transform" />
+              <span className="text-[10px] font-bold uppercase tracking-widest hidden sm:inline">Results</span>
             </button>
             <button 
               onClick={() => setIsSettingsOpen(true)}
@@ -2557,6 +2586,22 @@ function App() {
                 />
               </div>
               <ThemeToggle />
+            </div>
+            <div className="flex items-center gap-2">
+              <button 
+                onClick={() => setIsHistoryOpen(true)}
+                className="flex items-center gap-2 px-4 py-2 bg-white/5 border border-white/10 rounded-lg hover:border-neon-magenta/50 hover:bg-neon-magenta/5 transition-all group"
+              >
+                <Clock size={16} className="text-neon-magenta group-hover:rotate-12 transition-transform" />
+                <span className="text-xs font-black text-white uppercase tracking-widest">History</span>
+              </button>
+              <button 
+                onClick={() => setIsResultsOpen(true)}
+                className="flex items-center gap-2 px-4 py-2 bg-white/5 border border-white/10 rounded-lg hover:border-neon-yellow/50 hover:bg-neon-yellow/5 transition-all group"
+              >
+                <BarChart3 size={16} className="text-neon-yellow group-hover:scale-110 transition-transform" />
+                <span className="text-xs font-black text-white uppercase tracking-widest">Results</span>
+              </button>
             </div>
           </div>
           
@@ -5333,6 +5378,8 @@ function App() {
         aiSuggestions={aiSuggestions}
         aiActions={aiActions}
         openInBrowser={openInBrowser}
+        onShowHistory={() => setIsHistoryOpen(true)}
+        onShowResults={() => setIsResultsOpen(true)}
       />
       <AnimatePresence>
         {isResultsOpen && (
@@ -5340,6 +5387,7 @@ function App() {
             isOpen={isResultsOpen} 
             onClose={() => setIsResultsOpen(false)} 
             scanResults={scanResults}
+            openInBrowser={openInBrowser}
           />
         )}
         {isSettingsOpen && (
@@ -5664,12 +5712,12 @@ const HistoryModal = ({ isOpen, onClose, history, onSelect, setScanResults, setI
   );
 }
 
-const ResultsModal = ({ isOpen, onClose, scanResults }: { isOpen: boolean, onClose: () => void, scanResults: any }) => {
+const ResultsModal = ({ isOpen, onClose, scanResults, openInBrowser }: { isOpen: boolean, onClose: () => void, scanResults: any, openInBrowser: (url: string) => void }) => {
   if (!isOpen) return null;
 
   const toolResults = useMemo(() => {
     if (!scanResults) return [];
-    const results: { name: string, data: any, type: string }[] = [];
+    const results: { name: string, data: any, type: string, url?: string }[] = [];
     
     if (scanResults.social) results.push({ name: 'Social Footprint', data: scanResults.social, type: 'social' });
     if (scanResults.whois) results.push({ name: 'WHOIS Data', data: scanResults.whois, type: 'json' });
@@ -5678,6 +5726,20 @@ const ResultsModal = ({ isOpen, onClose, scanResults }: { isOpen: boolean, onClo
     if (scanResults.ghunt) results.push({ name: 'GHunt Results', data: scanResults.ghunt, type: 'json' });
     if (scanResults.epieos) results.push({ name: 'Epieos Results', data: scanResults.epieos, type: 'json' });
     if (scanResults.holehe) results.push({ name: 'Holehe Results', data: scanResults.holehe, type: 'json' });
+    
+    // Add workflow results
+    if (scanResults.workflowResults) {
+      Object.entries(scanResults.workflowResults).forEach(([id, entry]: [string, any]) => {
+        // Try to find a better name for the tool if id is numeric
+        const tool = OSINT_TOOLS.find(t => t.id === id);
+        results.push({ 
+          name: tool ? tool.name : `Tool: ${id}`, 
+          data: entry.results, 
+          type: (id === '61' || id === '3' || (tool && tool.name.toLowerCase().includes('wayback'))) ? 'timeline' : 'json',
+          url: entry.url 
+        });
+      });
+    }
     
     return results;
   }, [scanResults]);
@@ -5727,37 +5789,135 @@ const ResultsModal = ({ isOpen, onClose, scanResults }: { isOpen: boolean, onClo
               </div>
 
               <div className="space-y-6">
-                {toolResults.map((tool, idx) => (
-                  <div key={idx} className="bg-white/5 border border-white/10 rounded-lg overflow-hidden">
-                    <div className="bg-white/5 px-4 py-2 border-b border-white/10 flex justify-between items-center">
-                      <h4 className="text-[10px] font-black uppercase tracking-widest text-white/80">{tool.name}</h4>
-                      <span className="text-[8px] font-mono text-white/20 uppercase">{tool.type}</span>
-                    </div>
+                {toolResults.length === 0 ? (
+                  <div className="py-12 border-2 border-dashed border-white/5 rounded-xl text-center opacity-40">
+                    <Search size={32} className="mx-auto mb-3" />
+                    <p className="text-[10px] uppercase tracking-widest">No detailed tool results available for this session</p>
+                    <p className="text-[8px] uppercase mt-1">Try running a Deep Scan or specific Tool Groups</p>
+                  </div>
+                ) : (
+                  toolResults.map((tool, idx) => (
+                    <div key={idx} className="bg-white/5 border border-white/10 rounded-lg overflow-hidden">
+                      <div className="bg-white/5 px-4 py-2 border-b border-white/10 flex justify-between items-center">
+                        <h4 className="text-[10px] font-black uppercase tracking-widest text-white/80">{tool.name}</h4>
+                        <div className="flex items-center gap-3">
+                          {tool.url && (
+                            <a 
+                              href={tool.url} 
+                              target="_blank" 
+                              rel="noopener noreferrer"
+                              className="text-[8px] text-neon-cyan hover:underline uppercase flex items-center gap-1"
+                            >
+                              Source <ExternalLink size={8} />
+                            </a>
+                          )}
+                          <span className="text-[8px] font-mono text-white/20 uppercase">{tool.type}</span>
+                        </div>
+                      </div>
                       <div className="p-4 overflow-x-auto">
-                        {tool.type === 'social' ? (
-                          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
-                            {tool.data.filter((s: any) => s.status === 'Found' || s.status === 'Possible but Deleted').map((site: any, sIdx: number) => (
-                              <div key={sIdx} className="p-2 bg-neon-lime/5 border border-neon-lime/20 rounded flex flex-col gap-1">
-                                <div className="flex items-center justify-between gap-2">
-                                  <span className="text-[9px] uppercase tracking-tighter text-neon-lime truncate font-black">{site.name}</span>
-                                  {site.followers && (
-                                    <span className="text-[7px] font-mono text-neon-cyan opacity-80">{site.followers}</span>
-                                  )}
+                        <div className="mb-4 flex justify-end">
+                          <button 
+                            onClick={(e) => {
+                              const pre = e.currentTarget.parentElement?.nextElementSibling?.querySelector('pre');
+                              if (pre) pre.classList.toggle('hidden');
+                            }}
+                            className="text-[8px] font-mono text-white/40 hover:text-neon-cyan uppercase tracking-widest"
+                          >
+                            Toggle Raw Data
+                          </button>
+                        </div>
+                        <div className="relative">
+                          <pre className="hidden absolute inset-0 z-10 bg-black/95 p-4 text-[9px] font-mono text-neon-cyan overflow-auto custom-scrollbar border border-neon-cyan/30 rounded shadow-2xl max-h-[400px]">
+                            {JSON.stringify(tool.data, null, 2)}
+                          </pre>
+                          {tool.type === 'social' ? (
+                          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                            {tool.data.map((site: any, sIdx: number) => {
+                              const isFound = site.status === 'Found' || site.status === 'Possible but Deleted';
+                              if (!isFound) return null;
+                              
+                              return (
+                                <div key={sIdx} className="p-3 bg-white/5 border border-white/10 rounded-lg hover:border-neon-lime/30 transition-all group">
+                                  <div className="flex items-center justify-between gap-2 mb-2">
+                                    <span className="text-[10px] uppercase tracking-widest text-neon-lime font-black truncate">{site.name}</span>
+                                    {site.url && (
+                                      <a 
+                                        href={site.url} 
+                                        target="_blank" 
+                                        rel="noopener noreferrer"
+                                        className="p-1.5 bg-white/5 rounded hover:bg-neon-lime hover:text-black transition-all"
+                                      >
+                                        <ExternalLink size={10} />
+                                      </a>
+                                    )}
+                                  </div>
+                                  <div className="space-y-1">
+                                    {site.followers && (
+                                      <div className="flex items-center justify-between text-[8px] uppercase tracking-widest">
+                                        <span className="text-white/40">Followers</span>
+                                        <span className="text-neon-cyan font-mono">{site.followers}</span>
+                                      </div>
+                                    )}
+                                    {site.posts && (
+                                      <div className="flex items-center justify-between text-[8px] uppercase tracking-widest">
+                                        <span className="text-white/40">Posts</span>
+                                        <span className="text-neon-cyan font-mono">{site.posts}</span>
+                                      </div>
+                                    )}
+                                    {site.bio && (
+                                      <p className="text-[8px] text-white/60 mt-2 line-clamp-2 italic leading-relaxed">
+                                        "{site.bio}"
+                                      </p>
+                                    )}
+                                  </div>
                                 </div>
-                                {site.bio && (
-                                  <p className="text-[7px] text-white/30 truncate italic">"{site.bio}"</p>
-                                )}
+                              );
+                            })}
+                            {tool.data.filter((s: any) => s.status === 'Found' || s.status === 'Possible but Deleted').length === 0 && (
+                              <div className="col-span-full py-8 text-center opacity-20">
+                                <p className="text-[10px] uppercase tracking-widest">No active profiles identified</p>
                               </div>
-                            ))}
+                            )}
                           </div>
                         ) : tool.type === 'timeline' ? (
-                          <div className="space-y-1">
-                            {tool.data.slice(0, 20).map((entry: any, eIdx: number) => (
-                              <div key={eIdx} className="text-[9px] font-mono text-white/40 flex gap-2">
-                                <span className="text-neon-cyan">[{entry.timestamp}]</span>
-                                <span className="truncate">{entry.url}</span>
-                              </div>
-                            ))}
+                          <div className="space-y-2">
+                            {(() => {
+                              if (tool.data?.error) {
+                                return (
+                                  <div className="p-4 bg-red-500/10 border border-red-500/30 rounded-lg flex items-center gap-3 text-red-500">
+                                    <AlertTriangle size={16} />
+                                    <span className="text-xs font-bold uppercase tracking-widest">{tool.data.error}</span>
+                                  </div>
+                                );
+                              }
+                              const timelineData = Array.isArray(tool.data) 
+                                ? tool.data 
+                                : (tool.data?.snapshots || tool.data?.results || (Array.isArray(tool.data?.data) ? tool.data.data : null));
+                              
+                              if (Array.isArray(timelineData)) {
+                                return timelineData.slice(0, 50).map((entry: any, eIdx: number) => (
+                                  <div key={eIdx} className="text-[10px] font-mono flex items-center gap-3 group">
+                                    <span className="text-neon-cyan/60 shrink-0">[{entry.timestamp || 'N/A'}]</span>
+                                    <button 
+                                      onClick={() => openInBrowser(entry.url)}
+                                      className="text-white/60 hover:text-neon-lime truncate transition-colors flex items-center gap-1 flex-1 text-left"
+                                    >
+                                      {entry.url}
+                                      <ExternalLink size={8} className="opacity-0 group-hover:opacity-100 transition-opacity" />
+                                    </button>
+                                  </div>
+                                ));
+                              }
+                              
+                              return (
+                                <div className="p-3 border border-white/5 bg-white/5 rounded">
+                                  <p className="text-[10px] text-white/40 italic mb-2">Non-standard timeline data format detected:</p>
+                                  <pre className="text-[9px] font-mono text-white/60 leading-tight whitespace-pre-wrap">
+                                    {JSON.stringify(tool.data, null, 2)}
+                                  </pre>
+                                </div>
+                              );
+                            })()}
                           </div>
                         ) : (
                           <div className="max-h-[300px] overflow-y-auto custom-scrollbar">
@@ -5768,9 +5928,10 @@ const ResultsModal = ({ isOpen, onClose, scanResults }: { isOpen: boolean, onClo
                             </pre>
                           </div>
                         )}
+                        </div>
                       </div>
                   </div>
-                ))}
+                )))}
               </div>
             </>
           )}
@@ -5853,7 +6014,9 @@ const IntelligenceWindow = React.memo(({
   searchQuery,
   aiSuggestions,
   aiActions,
-  openInBrowser
+  openInBrowser,
+  onShowHistory,
+  onShowResults
 }: IntelligenceWindowProps) => {
   const categoryChartData = useMemo(() => {
     if (!scanResults || !scanResults.social) return [];
@@ -5905,6 +6068,18 @@ const IntelligenceWindow = React.memo(({
             </div>
           </div>
           <div className="flex items-center gap-4">
+            <button 
+              onClick={onShowHistory}
+              className="flex items-center gap-2 px-3 py-1.5 bg-white/5 border border-white/10 rounded text-[10px] text-neon-magenta hover:bg-neon-magenta/10 transition-all uppercase tracking-widest font-black"
+            >
+              <Clock size={14} /> History
+            </button>
+            <button 
+              onClick={onShowResults}
+              className="flex items-center gap-2 px-3 py-1.5 bg-white/5 border border-white/10 rounded text-[10px] text-neon-yellow hover:bg-neon-yellow/10 transition-all uppercase tracking-widest font-black"
+            >
+              <BarChart3 size={14} /> Results
+            </button>
             <button 
               onClick={onExportJSON}
               className="hidden sm:flex items-center gap-2 px-3 py-1.5 bg-white/5 border border-white/10 rounded text-[10px] text-white/60 hover:text-white hover:bg-white/10 transition-all uppercase tracking-widest"
@@ -6106,34 +6281,62 @@ const IntelligenceWindow = React.memo(({
                     )}
                   </div>
                 )}
-
                 {/* Historical Timeline */}
-                {scanResults.timeline && Array.isArray(scanResults.timeline) && scanResults.timeline.length > 0 && (
-                  <div className="space-y-6">
-                    <div className="flex items-center gap-4 border-b border-white/10 pb-4">
-                      <Clock size={20} className="text-neon-cyan" />
-                      <h4 className="text-sm font-black uppercase tracking-[0.3em] text-white">Historical_Timeline</h4>
-                    </div>
-                    <div className="space-y-4 bg-white/5 p-6 border border-white/10 rounded-lg max-h-80 overflow-y-auto custom-scrollbar">
-                      {scanResults.timeline.map((entry: any, i: number) => (
-                        <div key={i} className="flex items-start gap-4 text-[10px] font-mono group/timeline border-b border-white/5 pb-3 last:border-0">
-                          <span className="text-neon-cyan opacity-50 font-black whitespace-nowrap">[{entry.timestamp || entry.date || 'ARCHIVE'}]</span>
-                          <div className="flex-1 min-w-0">
-                            <p className="text-white/80 font-black uppercase mb-1">{entry.event || entry.title || 'Snapshot Captured'}</p>
-                            {entry.url && (
-                              <button 
-                                onClick={() => openInBrowser(entry.url)}
-                                className="text-neon-cyan/60 hover:text-neon-cyan hover:underline truncate max-w-full block text-left flex items-center gap-2"
-                              >
-                                {entry.url} <ExternalLink size={10} />
-                              </button>
-                            )}
+                {(() => {
+                  const rawTimeline = scanResults.timeline || scanResults.workflowResults?.['61']?.results || scanResults.workflowResults?.['3']?.results;
+                  if (!rawTimeline) return null;
+
+                  if (rawTimeline.error) {
+                    return (
+                      <div className="space-y-6">
+                        <div className="flex items-center gap-4 border-b border-white/10 pb-4">
+                          <Clock size={20} className="text-neon-cyan" />
+                          <h4 className="text-sm font-black uppercase tracking-[0.3em] text-white">Historical_Timeline</h4>
+                        </div>
+                        <div className="p-6 bg-red-500/10 border border-red-500/30 rounded-lg flex items-center gap-4 text-red-500">
+                          <AlertTriangle size={24} />
+                          <div>
+                            <p className="text-xs font-black uppercase tracking-widest mb-1">Timeline_Fetch_Error</p>
+                            <p className="text-[10px] font-mono opacity-80">{rawTimeline.error}</p>
                           </div>
                         </div>
-                      ))}
+                      </div>
+                    );
+                  }
+
+                  const timelineData = Array.isArray(rawTimeline) 
+                    ? rawTimeline 
+                    : (rawTimeline.snapshots || rawTimeline.results || (Array.isArray(rawTimeline.data) ? rawTimeline.data : null));
+                  
+                  if (!timelineData || !Array.isArray(timelineData) || timelineData.length === 0) return null;
+
+                  return (
+                    <div className="space-y-6">
+                      <div className="flex items-center gap-4 border-b border-white/10 pb-4">
+                        <Clock size={20} className="text-neon-cyan" />
+                        <h4 className="text-sm font-black uppercase tracking-[0.3em] text-white">Historical_Timeline</h4>
+                      </div>
+                      <div className="space-y-4 bg-white/5 p-6 border border-white/10 rounded-lg max-h-80 overflow-y-auto custom-scrollbar">
+                        {timelineData.map((entry: any, i: number) => (
+                          <div key={i} className="flex items-start gap-4 text-[10px] font-mono group/timeline border-b border-white/5 pb-3 last:border-0">
+                            <span className="text-neon-cyan opacity-50 font-black whitespace-nowrap">[{entry.timestamp || entry.date || 'ARCHIVE'}]</span>
+                            <div className="flex-1 min-w-0">
+                              <p className="text-white/80 font-black uppercase mb-1">{entry.event || entry.title || 'Snapshot Captured'}</p>
+                              {entry.url && (
+                                <button 
+                                  onClick={() => openInBrowser(entry.url)}
+                                  className="text-neon-cyan/60 hover:text-neon-cyan hover:underline truncate max-w-full block text-left flex items-center gap-2"
+                                >
+                                  {entry.url} <ExternalLink size={10} />
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
                     </div>
-                  </div>
-                )}
+                  );
+                })()}
 
                 {/* Intelligence Visualization */}
                 {scanResults.social && scanResults.social.length > 0 && (

@@ -18,6 +18,20 @@ axiosRetry(axios, {
   }
 });
 
+const USER_AGENTS = [
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/121.0',
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:109.0) Gecko/20100101 Firefox/120.0',
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Edge/120.0.0.0',
+  'Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:120.0) Gecko/20100101 Firefox/120.0',
+  'Mozilla/5.0 (iPhone; CPU iPhone OS 17_1_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Mobile/15E148 Safari/604.1',
+  'Mozilla/5.0 (iPad; CPU OS 17_1_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Mobile/15E148 Safari/604.1',
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_1) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Safari/605.1.15',
+  'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Mobile Safari/537.36'
+];
+
 async function startServer() {
   const app = express();
   const PORT = 3000;
@@ -352,59 +366,86 @@ async function startServer() {
     const { url } = req.query;
     if (!url) return res.status(400).json({ error: 'URL required' });
     
-    try {
-      // Use Wayback CDX API to get snapshots
-      const cdxUrl = `https://web.archive.org/cdx/search/cdx?url=${encodeURIComponent(url as string)}&output=json&fl=timestamp,statuscode&filter=statuscode:200&limit=500`;
-      
-      const response = await axios.get(cdxUrl, { 
-        timeout: 15000,
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 OSINT-Hub/1.0'
-        },
-        validateStatus: (status) => status < 500 // Don't throw on 4xx
-      });
-      
-      if (response.status === 403 || response.status === 429) {
-        return res.status(response.status).json({ error: 'Wayback Machine is rate-limiting or blocking requests. Please try again later.' });
+    let retries = 0;
+    const maxRetries = 2;
+    let lastError: any = null;
+
+    while (retries <= maxRetries) {
+      try {
+        // Use Wayback CDX API to get snapshots
+        const cdxUrl = `https://web.archive.org/cdx/search/cdx?url=${encodeURIComponent(url as string)}&output=json&fl=timestamp,statuscode&filter=statuscode:200&limit=500`;
+        
+        const userAgent = USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)];
+        
+        const response = await axios.get(cdxUrl, { 
+          timeout: 25000, // Increased timeout
+          headers: {
+            'User-Agent': userAgent,
+            'Accept': 'application/json, text/plain, */*',
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Cache-Control': 'no-cache',
+            'Pragma': 'no-cache'
+          },
+          validateStatus: (status) => status < 500 // Don't throw on 4xx
+        });
+        
+        if (response.status === 403 || response.status === 429) {
+          console.warn(`Wayback CDX blocked/rate-limited (Status: ${response.status}). Retry ${retries + 1}/${maxRetries}`);
+          retries++;
+          await new Promise(resolve => setTimeout(resolve, 2000 * retries));
+          continue;
+        }
+
+        if (response.status === 503) {
+          console.warn(`Wayback CDX overloaded (503). Retry ${retries + 1}/${maxRetries}`);
+          retries++;
+          await new Promise(resolve => setTimeout(resolve, 3000 * retries));
+          continue;
+        }
+
+        if (!response.data || !Array.isArray(response.data) || response.data.length <= 1) {
+          return res.json({ firstSeen: null, lastSeen: null, count: 0, timeline: [] });
+        }
+
+        // CDX returns [["timestamp", "statuscode"], ["2021...", "200"], ...]
+        const snapshots = response.data.slice(1);
+        const timestamps = snapshots.map((s: string[]) => s[0]).sort();
+        
+        const firstSeen = timestamps[0];
+        const lastSeen = timestamps[timestamps.length - 1];
+        
+        // Format timestamps (YYYYMMDDHHMMSS)
+        const formatDate = (ts: string) => {
+          const year = ts.substring(0, 4);
+          const month = ts.substring(4, 6);
+          const day = ts.substring(6, 8);
+          return `${year}-${month}-${day}`;
+        };
+
+        return res.json({
+          firstSeen: formatDate(firstSeen),
+          lastSeen: formatDate(lastSeen),
+          count: snapshots.length,
+          timeline: timestamps.map(ts => ({
+            timestamp: ts,
+            formattedDate: formatDate(ts),
+            status: '200',
+            url: `https://web.archive.org/web/${ts}/${url}`
+          }))
+        });
+      } catch (error: any) {
+        lastError = error;
+        console.error(`Wayback timeline attempt ${retries + 1} failed:`, error.message || error);
+        retries++;
+        if (retries <= maxRetries) {
+          await new Promise(resolve => setTimeout(resolve, 1000 * retries));
+        }
       }
-
-      if (response.status === 503) {
-        return res.status(503).json({ error: 'Wayback Machine is currently overloaded (503). Please try again later.' });
-      }
-
-      if (!response.data || !Array.isArray(response.data) || response.data.length <= 1) {
-        return res.json({ firstSeen: null, lastSeen: null, count: 0, timeline: [] });
-      }
-
-      // CDX returns [["timestamp", "statuscode"], ["2021...", "200"], ...]
-      const snapshots = response.data.slice(1);
-      const timestamps = snapshots.map((s: string[]) => s[0]).sort();
-      
-      const firstSeen = timestamps[0];
-      const lastSeen = timestamps[timestamps.length - 1];
-      
-      // Format timestamps (YYYYMMDDHHMMSS)
-      const formatDate = (ts: string) => {
-        const year = ts.substring(0, 4);
-        const month = ts.substring(4, 6);
-        const day = ts.substring(6, 8);
-        return `${year}-${month}-${day}`;
-      };
-
-      res.json({
-        firstSeen: formatDate(firstSeen),
-        lastSeen: formatDate(lastSeen),
-        count: snapshots.length,
-        timeline: timestamps.map(ts => ({
-          timestamp: ts,
-          formattedDate: formatDate(ts),
-          status: '200'
-        }))
-      });
-    } catch (error) {
-      console.error('Wayback timeline error:', error.message || error);
-      res.status(500).json({ error: 'Failed to fetch Wayback timeline' });
     }
+
+    const status = lastError?.response?.status || 500;
+    const message = lastError?.response?.data?.error || lastError?.message || 'Failed to fetch Wayback timeline';
+    res.status(status).json({ error: `Wayback Error: ${message}` });
   });
 
   const searchLimit = pLimit(8); // Further reduced concurrency
@@ -417,19 +458,6 @@ async function startServer() {
       console.log('Max search depth reached for query:', query);
       return [];
     }
-    const userAgents = [
-      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
-      'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36',
-      'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/121.0',
-      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:109.0) Gecko/20100101 Firefox/120.0',
-      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Edge/120.0.0.0',
-      'Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:120.0) Gecko/20100101 Firefox/120.0',
-      'Mozilla/5.0 (iPhone; CPU iPhone OS 17_1_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Mobile/15E148 Safari/604.1',
-      'Mozilla/5.0 (iPad; CPU OS 17_1_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Mobile/15E148 Safari/604.1',
-      'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_1) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Safari/605.1.15',
-      'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Mobile Safari/537.36'
-    ];
     
     const isDork = query.includes('site:') || query.includes('filetype:') || query.includes('intitle:') || query.includes('inurl:');
     
@@ -524,7 +552,7 @@ async function startServer() {
         const waitTime = googleRetries === 0 ? (Math.random() * 1000 + 500) : (Math.random() * 3000 * Math.pow(2, googleRetries));
         await sleep(waitTime);
         
-        const userAgent = userAgents[Math.floor(Math.random() * userAgents.length)];
+        const userAgent = USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)];
         const googleUrl = `https://www.google.com/search?q=${encodeURIComponent(query)}&num=30`;
         
         const response = await searchLimit(() => axios.get(googleUrl, {
@@ -587,7 +615,7 @@ async function startServer() {
         console.log(`[Search] Falling back to DuckDuckGo for: ${query}`);
         await sleep(Math.random() * 500 + 300);
         const ddgUrl = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
-        const userAgent = userAgents[Math.floor(Math.random() * userAgents.length)];
+        const userAgent = USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)];
         const ddgResponse = await searchLimit(() => axios.get(ddgUrl, {
           headers: { 
             'User-Agent': userAgent,
@@ -618,7 +646,7 @@ async function startServer() {
       try {
         await sleep(Math.random() * 1000 + 500);
         const bingUrl = `https://www.bing.com/search?q=${encodeURIComponent(query)}`;
-        const userAgent = userAgents[Math.floor(Math.random() * userAgents.length)];
+        const userAgent = USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)];
         const bingResponse = await searchLimit(() => axios.get(bingUrl, {
           headers: { 
             'User-Agent': userAgent,
@@ -646,7 +674,7 @@ async function startServer() {
       try {
         await sleep(Math.random() * 1000 + 500);
         const yahooUrl = `https://search.yahoo.com/search?p=${encodeURIComponent(query)}`;
-        const userAgent = userAgents[Math.floor(Math.random() * userAgents.length)];
+        const userAgent = USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)];
         const yahooResponse = await searchLimit(() => axios.get(yahooUrl, {
           headers: { 
             'User-Agent': userAgent,
