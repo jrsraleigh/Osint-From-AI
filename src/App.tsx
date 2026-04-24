@@ -102,6 +102,9 @@ interface IntelligenceWindowProps {
   openInBrowser: (url: string) => void;
   onShowHistory: () => void;
   onShowResults: () => void;
+  allTargets?: string[];
+  selectedTargetIndex?: number;
+  onSelectTarget?: (index: number) => void;
 }
 
 interface StatusWindowProps {
@@ -509,6 +512,10 @@ export default function AppWrapper() {
 function App() {
   const { theme, toggleTheme } = useTheme();
   const [searchQuery, setSearchQuery] = useState('');
+  const [extraTargets, setExtraTargets] = useState<string[]>([]);
+  const [selectedTargetIndex, setSelectedTargetIndex] = useState(0);
+  const allTargets = useMemo(() => [searchQuery, ...extraTargets].filter(t => t.trim() !== ''), [searchQuery, extraTargets]);
+
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('');
   const [searchHistory, setSearchHistory] = useState<string[]>(() => {
     try {
@@ -1495,7 +1502,8 @@ function App() {
   }, [searchQuery]);
 
   const handleSocialDork = () => {
-    if (!searchQuery) return;
+    const currentTarget = allTargets[selectedTargetIndex] || searchQuery;
+    if (!currentTarget) return;
     const tool = OSINT_TOOLS.find(t => t.id === '66');
     if (tool) {
       handleToolSearch(tool);
@@ -1503,7 +1511,8 @@ function App() {
   };
 
   const handleMassRecon = async () => {
-    if (!searchQuery) return;
+    const currentTarget = allTargets[selectedTargetIndex] || searchQuery;
+    if (!currentTarget) return;
     setIsMassReconRunning(true);
     setActiveTab('Scan');
     
@@ -1937,110 +1946,91 @@ function App() {
   };
 
   const handleScan = async (deep = false) => {
-    if (!searchQuery || !searchQuery.trim()) return;
+    const targetsToScan = [searchQuery, ...extraTargets].filter(t => t.trim() !== '');
+    if (targetsToScan.length === 0) return;
     
     // Clear any existing controllers
     abortControllersRef.current.forEach(c => c.abort());
     abortControllersRef.current = [];
     
-    saveSearch(searchQuery);
-    addToSearchHistory(searchQuery);
     setIsScanning(true);
     setIsDeepScan(deep);
     setIsHistoricalScan(false);
     setActiveTab('Scan');
     
-    if (!scanResults || scanResults.target !== searchQuery) {
-      setScanResults(null);
-    }
+    const allResults: Record<string, any> = {};
+    
+    for (const target of targetsToScan) {
+      saveSearch(target);
+      addToSearchHistory(target);
+      
+      let results: any = null;
+      try {
+        const isDomain = target.includes('.') && !target.includes('@') && !target.includes(' ') && target.split('.').pop()!.length >= 2;
+        const isEmail = target.includes('@') && target.includes('.');
+        const isUsername = !isDomain && !isEmail;
 
-    let results: any = null;
-    try {
-      const isDomain = searchQuery.includes('.') && !searchQuery.includes('@') && !searchQuery.includes(' ') && searchQuery.split('.').pop()!.length >= 2;
-      const isEmail = searchQuery.includes('@') && searchQuery.includes('.');
-      const isUsername = !isDomain && !isEmail;
+        results = {
+          timestamp: new Date().toISOString(),
+          target: target,
+          type: isDomain ? 'Domain' : isEmail ? 'Email' : 'Username',
+          possibleIdentifiers: generatePossibleIdentifiers(target)
+        };
 
-      results = {
-        timestamp: new Date().toISOString(),
-        target: searchQuery,
-        type: isDomain ? 'Domain' : isEmail ? 'Email' : 'Username',
-        possibleIdentifiers: generatePossibleIdentifiers(searchQuery)
-      };
-
-      if (deep) {
-        const promises: Promise<any>[] = [];
-        
-        // Only run WHOIS and DNS for domains or emails (extract domain from email)
-        if (isDomain || isEmail) {
-          promises.push(runTool('WHOIS_LOOKUP', `/api/osint/whois?target=${searchQuery}`, undefined, 'Domain'));
-          promises.push(runTool('DNS_ENUMERATION', `/api/osint/dns?target=${searchQuery}`, undefined, 'Domain'));
-        } else {
-          // Push nulls to maintain array index if needed, or handle differently
-          promises.push(Promise.resolve(null));
-          promises.push(Promise.resolve(null));
-        }
-        
-        // Social presence is always relevant for deep scans
-        promises.push(runTool('SOCIAL_PRESENCE', `/api/osint/social?target=${searchQuery}`, undefined, 'Social'));
-        
-        const [whoisRes, dnsRes, socialRes] = await Promise.all(promises);
-        results.whois = whoisRes;
-        results.dns = dnsRes;
-        results.social = socialRes;
-      } else {
-        if (isDomain) {
-          const [whoisRes, dnsRes] = await Promise.all([
-            runTool('WHOIS_LOOKUP', `/api/osint/whois?target=${searchQuery}`, undefined, 'Domain'),
-            runTool('DNS_ENUMERATION', `/api/osint/dns?target=${searchQuery}`, undefined, 'Domain')
-          ]);
+        if (deep) {
+          const promises: Promise<any>[] = [];
+          
+          if (isDomain || isEmail) {
+            promises.push(runTool('WHOIS_LOOKUP', `/api/osint/whois?target=${target}`, undefined, 'Domain'));
+            promises.push(runTool('DNS_ENUMERATION', `/api/osint/dns?target=${target}`, undefined, 'Domain'));
+          } else {
+            promises.push(Promise.resolve(null));
+            promises.push(Promise.resolve(null));
+          }
+          
+          promises.push(runTool('SOCIAL_PRESENCE', `/api/osint/social?target=${target}`, undefined, 'Social'));
+          
+          const [whoisRes, dnsRes, socialRes] = await Promise.all(promises);
           results.whois = whoisRes;
           results.dns = dnsRes;
-        }
+          results.social = socialRes;
+        } else {
+          if (isDomain) {
+            const [whoisRes, dnsRes] = await Promise.all([
+              runTool('WHOIS_LOOKUP', `/api/osint/whois?target=${target}`, undefined, 'Domain'),
+              runTool('DNS_ENUMERATION', `/api/osint/dns?target=${target}`, undefined, 'Domain')
+            ]);
+            results.whois = whoisRes;
+            results.dns = dnsRes;
+          }
 
-        if (isUsername || isEmail) {
-          results.social = await runTool('SOCIAL_PRESENCE', `/api/osint/social?target=${searchQuery}`, undefined, 'Social');
-        }
+          if (isUsername || isEmail) {
+            results.social = await runTool('SOCIAL_PRESENCE', `/api/osint/social?target=${target}`, undefined, 'Social');
+          }
 
-        if (isEmail) {
-          const [ghuntRes, epieosRes, holeheRes] = await Promise.all([
-            runTool('GHUNT_SCAN', `/api/osint/search?q=${encodeURIComponent(`"${searchQuery}" google account -inurl:login -inurl:signin -inurl:signup`)}`, 'ghunt', 'Email'),
-            runTool('EPIEOS_SCAN', `/api/osint/search?q=${encodeURIComponent(`site:epieos.com "${searchQuery}"`)}`, 'epieos', 'Email'),
-            runTool('HOLEHE_SCAN', `/api/osint/search?q=${encodeURIComponent(`"${searchQuery}" account -inurl:login -inurl:signin -inurl:signup`)}`, 'holehe', 'Email')
-          ]);
-          results.ghunt = ghuntRes;
-          results.epieos = epieosRes;
-          results.holehe = holeheRes;
+          if (isEmail) {
+            const [ghuntRes, epieosRes, holeheRes] = await Promise.all([
+              runTool('GHUNT_SCAN', `/api/osint/search?q=${encodeURIComponent(`"${target}" google account -inurl:login -inurl:signin -inurl:signup`)}`, 'ghunt', 'Email'),
+              runTool('EPIEOS_SCAN', `/api/osint/search?q=${encodeURIComponent(`site:epieos.com "${target}"`)}`, 'epieos', 'Email'),
+              runTool('HOLEHE_SCAN', `/api/osint/search?q=${encodeURIComponent(`"${target}" account -inurl:login -inurl:signin -inurl:signup`)}`, 'holehe', 'Email')
+            ]);
+            results.ghunt = ghuntRes;
+            results.epieos = epieosRes;
+            results.holehe = holeheRes;
+          }
         }
+        allResults[target] = results;
+      } catch (error) {
+        console.error(`Scan failed for target ${target}:`, error);
       }
+    }
 
-      setScanResults(prev => {
-        const updated = { ...prev, ...results };
-        
-        // Prune social results for history to stay within localStorage limits
-        const historyResults = { ...updated };
-        if (historyResults.social && Array.isArray(historyResults.social)) {
-          historyResults.social = historyResults.social.filter((s: any) => 
-            s.status === 'Found' || s.status === 'Possible but Deleted'
-          ).slice(0, 200);
-        }
-
-        const historyItem = {
-          timestamp: results.timestamp,
-          query: searchQuery,
-          isDeep: deep,
-          results: historyResults
-        };
-        
-        console.log('Saving to scan history:', historyItem);
-        setScanHistory(h => [historyItem, ...h].slice(0, 10));
-        
-        return updated;
-      });
-    } catch (error) {
-      console.error('Scan failed:', error);
-    } finally {
-      setIsScanning(false);
-      if (results) setShowIntelligenceWindow(true);
+    setScanResults(allResults);
+    setIsScanning(false);
+    if (Object.keys(allResults).length > 0) {
+      setShowIntelligenceWindow(true);
+      // Set the first target as selected for the intelligence window
+      setSelectedTargetIndex(0);
     }
   };
 
@@ -2048,13 +2038,14 @@ function App() {
     let url = '';
     let name = '';
     let toolId = '';
+    const currentTarget = allTargets[selectedTargetIndex] || searchQuery;
 
     if (typeof toolOrName === 'string') {
       const tool = OSINT_TOOLS.find(t => t.name === toolOrName);
       if (tool) {
         name = tool.name;
         toolId = tool.id;
-        url = customUrl || (tool.searchUrl && searchQuery ? tool.searchUrl.replace('{query}', encodeURIComponent(searchQuery)) : tool.url);
+        url = customUrl || (tool.searchUrl && currentTarget ? tool.searchUrl.replace('{query}', encodeURIComponent(currentTarget)) : tool.url);
       } else {
         name = toolOrName;
         url = customUrl || '';
@@ -2062,13 +2053,13 @@ function App() {
     } else {
       name = toolOrName.name;
       toolId = toolOrName.id;
-      url = customUrl || (toolOrName.searchUrl && searchQuery ? toolOrName.searchUrl.replace('{query}', encodeURIComponent(searchQuery)) : toolOrName.url);
+      url = customUrl || (toolOrName.searchUrl && currentTarget ? toolOrName.searchUrl.replace('{query}', encodeURIComponent(currentTarget)) : toolOrName.url);
     }
 
     if (!url) return;
 
     // If no search query, just open the tool URL in the browser tab
-    if (!searchQuery) {
+    if (!currentTarget) {
       setBrowserUrl(url);
       setBrowserHistory(prev => [url, ...prev].slice(0, 50));
       setActiveTab('Browser');
@@ -2273,11 +2264,24 @@ function App() {
     try {
       const prompt = `Analyze the following OSINT scan results and provide a comprehensive intelligence briefing. 
         Extract key information such as:
+        - Legal names and physical addresses (PRIORITY)
+        - Primary city/state of residence (if full address is redacted)
         - Potential social media profiles
         - Email addresses and phone numbers
         - Associated usernames or aliases
         - Potential data breaches or leaks
         - Risk assessment and recommended next steps
+        
+        If scanning a USERNAME: 
+        1. Look for real-world markers in bios and snippet data.
+        2. Analyze identified locations for regional patterns (e.g., specific dialects or platform preferences like VK or LINE).
+        3. Flag any potential forensic metadata mentioned in snippets (e.g., mentions of specific camera models or software versions).
+        
+        If scanning a PHONE NUMBER:
+        1. Look for caller ID markers, owner names, and carrier details.
+        2. Identify links to social profiles or business listings associated with the number.
+        3. Note if the number is identified as VoIP, mobile, or landline.
+        4. Suggest specialized AI-powered Google Dorks to find the number in leaked contact lists or specialized directories (e.g., WhatsApp group links or PDF resumes).
         
         Scan Results:
         "${analystInput}"`;
@@ -2345,18 +2349,30 @@ function App() {
         api = `/api/osint/search?q=${encodeURIComponent(`"${searchQuery}" account -inurl:login -inurl:signin -inurl:signup`)}`;
       } else if (tool.id === '10') { // Whois.com
         api = `/api/osint/whois?target=${encodeURIComponent(searchQuery)}`;
-      } else if (tool.id === '2') { // Sherlock
+      } else if (['23', '43', '39', '1'].includes(tool.id)) { // DNS/Domain tools
+        api = `/api/osint/dns?target=${encodeURIComponent(searchQuery)}`;
+      } else if (['2', '19', '51', '52'].includes(tool.id)) { // Social presence tools
         api = `/api/osint/social?target=${encodeURIComponent(searchQuery)}`;
       } else if (['6', '26', '62', '63', '64', '65'].includes(tool.id)) { // Breach tools
         const toolName = tool.id === '26' ? 'leakcheck' : tool.id === '6' || tool.id === '62' ? 'hibp' : 'generic';
         api = `/api/osint/breach?target=${encodeURIComponent(searchQuery)}&tool=${toolName}`;
       } else if (tool.id === '3' || tool.id === '61') { // Wayback Machine or Wayback Timeline
         api = `/api/osint/wayback-timeline?url=${encodeURIComponent(searchQuery)}`;
+      } else if (['100', '101', '102', '103', '90', '111', '112', '113', '114'].includes(tool.id)) { // Specialized Identity/Phone/Dork Search
+        // Use site-specific dorks for better discovery through search engines
+        const domain = tool.url.replace('https://', '').replace('www.', '').split('/')[0];
+        api = `/api/osint/search?q=${encodeURIComponent(`site:${domain} "${searchQuery}"`)}`;
+      } else if (tool.id === '108') { // Spokeo
+        api = `/api/osint/search?q=${encodeURIComponent(`site:spokeo.com "${searchQuery}"`)}`;
+      } else if (tool.id === '109') { // XF Metadata forensic
+        api = `/api/osint/metadata?url=${encodeURIComponent(searchQuery)}`;
+      } else if (tool.id === '110') { // Regional Scout
+        api = `/api/osint/search?q=${encodeURIComponent(`"${searchQuery}" (site:line.me OR site:weibo.com OR site:vk.com OR site:ok.ru OR site:zhihu.com)`)}`;
       } else if (tool.id === '87') { // AI Deep Scan Analyst
         // Skip automated run for UI-only tools, but mark as completed
         setWorkflowProgress(prev => ({ ...prev, [id]: true }));
         continue;
-      } else if (tool.id === '88') { // AI Google Dork Generator
+      } else if (tool.id === '88' || tool.id === '115') { // AI Google Dork Generators
         // Skip automated run for UI-only tools, but mark as completed
         setWorkflowProgress(prev => ({ ...prev, [id]: true }));
         continue;
@@ -2610,13 +2626,26 @@ function App() {
           </h1>
           
           <div className="max-w-2xl border-l-4 border-neon-cyan pl-4 md:pl-6 space-y-4">
-            <span className="text-neon-cyan font-mono text-sm uppercase tracking-widest block">// INPUT TARGET DATA BELOW</span>
-            <div ref={searchRef} className="flex items-center gap-3 bg-white/5 border border-white/10 p-4 rounded-lg group focus-within:border-neon-cyan transition-all relative">
-              {searchQuery && !searchQuery.includes('.') && !searchQuery.includes('@') ? (
-                <User size={24} className="text-neon-cyan shrink-0 animate-pulse" />
-              ) : (
-                <Search size={24} className="text-neon-cyan shrink-0" />
+            <div className="flex items-center justify-between">
+              <span className="text-neon-cyan font-mono text-sm uppercase tracking-widest block">// INPUT TARGET DATA BELOW</span>
+              {extraTargets.length < 4 && (
+                <button 
+                  onClick={() => setExtraTargets([...extraTargets, ''])}
+                  className="text-[10px] font-mono text-neon-cyan border border-neon-cyan/30 px-2 py-0.5 hover:bg-neon-cyan/10 transition-all flex items-center gap-1 uppercase"
+                >
+                  <Plus size={10} /> Add_Target
+                </button>
               )}
+            </div>
+            
+            <div className="space-y-3">
+              {/* Primary Target */}
+              <div ref={searchRef} className="flex items-center gap-3 bg-white/5 border border-white/10 p-4 rounded-lg group focus-within:border-neon-cyan transition-all relative">
+                {searchQuery && !searchQuery.includes('.') && !searchQuery.includes('@') ? (
+                  <User size={24} className="text-neon-cyan shrink-0 animate-pulse" />
+                ) : (
+                  <Search size={24} className="text-neon-cyan shrink-0" />
+                )}
               <div className="flex-1 relative">
                 <input 
                   type="text" 
@@ -2882,6 +2911,41 @@ function App() {
                   )}
                 </AnimatePresence>
               </div>
+            </div>
+              
+            {/* Extra Targets */}
+              {extraTargets.map((target, index) => (
+                <motion.div 
+                  initial={{ opacity: 0, x: -10 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  key={index} 
+                  className="flex items-center gap-3 bg-white/5 border border-white/10 p-3 rounded-lg group focus-within:border-neon-cyan transition-all"
+                >
+                  <Search size={18} className="text-neon-cyan/60 shrink-0" />
+                  <input 
+                    type="text" 
+                    placeholder={`EXTRA TARGET #${index + 2}...`}
+                    className="flex-1 bg-transparent border-none outline-none text-lg md:text-xl placeholder:opacity-20 font-mono text-neon-cyan uppercase tracking-wider"
+                    value={target}
+                    onChange={(e) => {
+                      const newExtraTargets = [...extraTargets];
+                      newExtraTargets[index] = e.target.value;
+                      setExtraTargets(newExtraTargets);
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        handleScan();
+                      }
+                    }}
+                  />
+                  <button 
+                    onClick={() => setExtraTargets(extraTargets.filter((_, i) => i !== index))}
+                    className="p-1 text-white/20 hover:text-neon-magenta transition-colors"
+                  >
+                    <X size={16} />
+                  </button>
+                </motion.div>
+              ))}
             </div>
           </div>
         </div>
@@ -5363,7 +5427,7 @@ function App() {
       <IntelligenceWindow 
         isOpen={showIntelligenceWindow}
         onClose={() => setShowIntelligenceWindow(false)}
-        scanResults={scanResults}
+        scanResults={scanResults ? (allTargets.length > 1 ? scanResults[allTargets[selectedTargetIndex]] : scanResults) : null}
         isScanning={isScanning}
         isDeepScan={isDeepScan}
         targetRiskScore={targetRiskScore}
@@ -5374,19 +5438,22 @@ function App() {
         onBreachQuery={handleBreachQuery}
         onExportJSON={exportCurrentScanResults}
         onDownloadLog={downloadScanLog}
-        searchQuery={searchQuery}
+        searchQuery={allTargets[selectedTargetIndex] || searchQuery}
         aiSuggestions={aiSuggestions}
         aiActions={aiActions}
         openInBrowser={openInBrowser}
         onShowHistory={() => setIsHistoryOpen(true)}
         onShowResults={() => setIsResultsOpen(true)}
+        allTargets={allTargets}
+        selectedTargetIndex={selectedTargetIndex}
+        onSelectTarget={setSelectedTargetIndex}
       />
       <AnimatePresence>
         {isResultsOpen && (
           <ResultsModal 
             isOpen={isResultsOpen} 
             onClose={() => setIsResultsOpen(false)} 
-            scanResults={scanResults}
+            scanResults={scanResults ? (allTargets.length > 1 ? scanResults[allTargets[selectedTargetIndex]] : scanResults) : null}
             openInBrowser={openInBrowser}
           />
         )}
@@ -5720,8 +5787,8 @@ const ResultsModal = ({ isOpen, onClose, scanResults, openInBrowser }: { isOpen:
     const results: { name: string, data: any, type: string, url?: string }[] = [];
     
     if (scanResults.social) results.push({ name: 'Social Footprint', data: scanResults.social, type: 'social' });
-    if (scanResults.whois) results.push({ name: 'WHOIS Data', data: scanResults.whois, type: 'json' });
-    if (scanResults.dns) results.push({ name: 'DNS Records', data: scanResults.dns, type: 'json' });
+    if (scanResults.whois) results.push({ name: 'WHOIS Data', data: scanResults.whois, type: 'whois' });
+    if (scanResults.dns) results.push({ name: 'DNS Records', data: scanResults.dns, type: 'dns' });
     if (scanResults.timeline) results.push({ name: 'Wayback Timeline', data: scanResults.timeline, type: 'timeline' });
     if (scanResults.ghunt) results.push({ name: 'GHunt Results', data: scanResults.ghunt, type: 'json' });
     if (scanResults.epieos) results.push({ name: 'Epieos Results', data: scanResults.epieos, type: 'json' });
@@ -5732,10 +5799,15 @@ const ResultsModal = ({ isOpen, onClose, scanResults, openInBrowser }: { isOpen:
       Object.entries(scanResults.workflowResults).forEach(([id, entry]: [string, any]) => {
         // Try to find a better name for the tool if id is numeric
         const tool = OSINT_TOOLS.find(t => t.id === id);
+        let type = 'json';
+        if (id === '10' || (tool && tool.name.toLowerCase().includes('whois'))) type = 'whois';
+        if (['23', '43', '39', '1'].includes(id) || (tool && tool.name.toLowerCase().includes('dns'))) type = 'dns';
+        if (id === '61' || id === '3' || (tool && tool.name.toLowerCase().includes('wayback'))) type = 'timeline';
+
         results.push({ 
           name: tool ? tool.name : `Tool: ${id}`, 
           data: entry.results, 
-          type: (id === '61' || id === '3' || (tool && tool.name.toLowerCase().includes('wayback'))) ? 'timeline' : 'json',
+          type,
           url: entry.url 
         });
       });
@@ -5919,6 +5991,95 @@ const ResultsModal = ({ isOpen, onClose, scanResults, openInBrowser }: { isOpen:
                               );
                             })()}
                           </div>
+                        ) : tool.type === 'dns' ? (
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            {Object.entries(tool.data || {}).map(([type, records]: [string, any], rIdx) => {
+                              if (!Array.isArray(records) || records.length === 0) return null;
+                              return (
+                                <div key={rIdx} className="bg-white/5 border border-white/10 rounded-lg p-3">
+                                  <div className="flex items-center gap-2 mb-2 pb-2 border-b border-white/5">
+                                    <div className="w-1.5 h-1.5 rounded-full bg-neon-cyan shadow-[0_0_5px_rgba(0,243,255,0.5)]" />
+                                    <h5 className="text-[10px] font-black uppercase tracking-widest text-white/80">{type} RECORDS</h5>
+                                  </div>
+                                  <div className="space-y-1.5">
+                                    {records.map((record: any, idx: number) => (
+                                      <div key={idx} className="text-[9px] font-mono text-white/60 bg-black/20 p-1.5 rounded border border-white/5 break-all">
+                                        {typeof record === 'string' ? record : JSON.stringify(record)}
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              );
+                            })}
+                            {(!tool.data || Object.keys(tool.data).length === 0) && (
+                              <div className="col-span-full py-8 text-center opacity-20">
+                                <p className="text-[10px] uppercase tracking-widest">No DNS records resolved</p>
+                              </div>
+                            )}
+                          </div>
+                        ) : tool.type === 'whois' ? (
+                          <div className="space-y-4">
+                            {(() => {
+                              const d = tool.data || {};
+                              // Helper to render sections
+                              const renderSection = (title: string, data: any) => {
+                                if (!data || (typeof data === 'object' && Object.keys(data).length === 0)) return null;
+                                return (
+                                  <div className="bg-white/5 border border-white/10 rounded-lg p-4">
+                                    <h5 className="text-[10px] font-black uppercase tracking-widest text-neon-magenta mb-3">{title}</h5>
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2">
+                                      {Object.entries(data).map(([key, val]: [string, any], idx) => {
+                                        if (!val || typeof val === 'object') return null;
+                                        return (
+                                          <div key={idx} className="flex flex-col">
+                                            <span className="text-[8px] text-white/30 uppercase tracking-widest mb-0.5">{key.replace(/_/g, ' ')}</span>
+                                            <span className="text-[10px] font-mono text-white/80 break-all">{String(val)}</span>
+                                          </div>
+                                        );
+                                      })}
+                                    </div>
+                                  </div>
+                                );
+                              };
+
+                              return (
+                                <>
+                                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                    <div className="bg-neon-cyan/5 border border-neon-cyan/20 rounded-lg p-4">
+                                      <span className="text-[8px] text-neon-cyan/60 uppercase tracking-widest">Registrar</span>
+                                      <p className="text-sm font-black text-white uppercase truncate">{d.registrar || d.Registrar || 'N/A'}</p>
+                                    </div>
+                                    <div className="bg-neon-magenta/5 border border-neon-magenta/20 rounded-lg p-4">
+                                      <span className="text-[8px] text-neon-magenta/60 uppercase tracking-widest">Created</span>
+                                      <p className="text-sm font-black text-white uppercase">{d.created_date || d['Creation Date'] || 'N/A'}</p>
+                                    </div>
+                                    <div className="bg-neon-lime/5 border border-neon-lime/20 rounded-lg p-4">
+                                      <span className="text-[8px] text-neon-lime/60 uppercase tracking-widest">Expires</span>
+                                      <p className="text-sm font-black text-white uppercase">{d.expiration_date || d['Registry Expiry Date'] || 'N/A'}</p>
+                                    </div>
+                                  </div>
+
+                                  {renderSection('REGISTRATION DETAILS', {
+                                    domain: d.domain_name || d['Domain Name'],
+                                    status: d.status || d['Domain Status'],
+                                    whois_server: d.whois_server || d['Whois Server'],
+                                    updated_date: d.updated_date || d['Updated Date']
+                                  })}
+
+                                  {renderSection('NAMESERVERS', d.name_servers || (d['Name Server'] ? { nameserver: d['Name Server'] } : null))}
+
+                                  {/* Fallback for raw text if most fields missing */}
+                                  {(!d.registrar && !d.domain_name) && (
+                                    <div className="p-3 border border-white/5 bg-white/5 rounded">
+                                      <pre className="text-[9px] font-mono text-white/60 leading-tight whitespace-pre-wrap">
+                                        {typeof d === 'string' ? d : JSON.stringify(d, null, 2)}
+                                      </pre>
+                                    </div>
+                                  )}
+                                </>
+                              );
+                            })()}
+                          </div>
                         ) : (
                           <div className="max-h-[300px] overflow-y-auto custom-scrollbar">
                             <pre className="text-[9px] font-mono text-white/60 leading-tight whitespace-pre-wrap">
@@ -6016,7 +6177,10 @@ const IntelligenceWindow = React.memo(({
   aiActions,
   openInBrowser,
   onShowHistory,
-  onShowResults
+  onShowResults,
+  allTargets = [],
+  selectedTargetIndex = 0,
+  onSelectTarget
 }: IntelligenceWindowProps) => {
   const categoryChartData = useMemo(() => {
     if (!scanResults || !scanResults.social) return [];
@@ -6054,6 +6218,24 @@ const IntelligenceWindow = React.memo(({
       className="fixed inset-y-0 left-0 w-full sm:w-[38rem] md:w-[50rem] lg:w-[68rem] xl:w-[92rem] z-[150] font-mono sm:m-6 sm:rounded-xl overflow-hidden intelligence-window-container shadow-2xl min-h-[600px]"
     >
       <div className="bg-[#050505]/98 border border-white/10 shadow-[0_0_100px_rgba(0,0,0,0.8)] backdrop-blur-3xl flex flex-col h-full intelligence-window">
+        {/* Target Selector for Multi-Target Scans */}
+        {allTargets.length > 1 && (
+          <div className="bg-black/50 border-b border-white/10 p-2 flex items-center gap-2 overflow-x-auto custom-scrollbar">
+            {allTargets.map((target, idx) => (
+              <button
+                key={idx}
+                onClick={() => onSelectTarget?.(idx)}
+                className={`px-3 py-1.5 rounded text-[10px] font-mono uppercase tracking-widest transition-all whitespace-nowrap ${
+                  selectedTargetIndex === idx 
+                    ? 'bg-neon-cyan text-black font-bold' 
+                    : 'bg-white/5 text-white/40 hover:bg-white/10'
+                }`}
+              >
+                Target: {target}
+              </button>
+            ))}
+          </div>
+        )}
         {/* Header */}
         <div className="flex items-center justify-between p-4 sm:p-6 border-b border-white/5 bg-gradient-to-r from-neon-lime/20 to-transparent intelligence-window-header">
           <div className="flex items-center gap-4">

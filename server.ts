@@ -8,6 +8,7 @@ import axiosRetry from 'axios-retry';
 import * as cheerio from 'cheerio';
 import Parser from 'rss-parser';
 import pLimit from 'p-limit';
+import ExifParser from 'exif-parser';
 
 // Configure axios retry
 axiosRetry(axios, { 
@@ -78,6 +79,38 @@ async function startServer() {
         latency: 'optimal'
       }
     });
+  });
+
+  app.get('/api/osint/metadata', async (req, res) => {
+    const { url } = req.query;
+    if (!url) return res.status(400).json({ error: 'URL required' });
+
+    try {
+      const response = await axios.get(String(url), {
+        responseType: 'arraybuffer',
+        timeout: 15000,
+        headers: {
+          'User-Agent': USER_AGENTS[0]
+        }
+      });
+
+      const exifParser = ExifParser.create(response.data);
+      const result = exifParser.parse();
+
+      res.json({
+        metadata: result.tags,
+        imageSize: result.size,
+        hasThumbnail: !!result.thumbnailOffset,
+        gps: result.tags.GPSLatitude ? {
+          lat: result.tags.GPSLatitude,
+          lng: result.tags.GPSLongitude,
+          alt: result.tags.GPSAltitude
+        } : null
+      });
+    } catch (error) {
+      console.error('[Metadata] Failed:', error.message);
+      res.status(500).json({ error: 'Failed to extract metadata. File may not contain EXIF data or URL is inaccessible.' });
+    }
   });
 
   // OSINT API Endpoints
@@ -611,89 +644,118 @@ async function startServer() {
 
     // If Google fails or returns no results, try DuckDuckGo
     if (results.length === 0) {
-      try {
-        console.log(`[Search] Falling back to DuckDuckGo for: ${query}`);
-        await sleep(Math.random() * 500 + 300);
-        const ddgUrl = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
-        const userAgent = USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)];
-        const ddgResponse = await searchLimit(() => axios.get(ddgUrl, {
-          headers: { 
-            'User-Agent': userAgent,
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-            'Referer': 'https://duckduckgo.com/'
-          },
-          timeout: 20000
-        }));
-        const $ddg = cheerio.load(ddgResponse.data);
-        $ddg('.result').each((i, el) => {
-          const title = $ddg(el).find('.result__title').text().trim();
-          const link = $ddg(el).find('.result__a').attr('href');
-          const snippet = $ddg(el).find('.result__snippet').text().trim();
-          if (title && link) {
-            const finalLink = link.startsWith('//') ? 'https:' + link : link;
-            if (!results.find(r => r.link === finalLink)) {
-              results.push({ title, link: finalLink, snippet, source: 'DuckDuckGo' });
+      let ddgRetries = 0;
+      while (ddgRetries < 2) {
+        try {
+          console.log(`[Search] DuckDuckGo attempt ${ddgRetries + 1} for: ${query}`);
+          await sleep(Math.random() * 800 + 400);
+          const ddgUrl = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
+          const userAgent = USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)];
+          const ddgResponse = await searchLimit(() => axios.get(ddgUrl, {
+            headers: { 
+              'User-Agent': userAgent,
+              'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+              'Referer': 'https://duckduckgo.com/'
+            },
+            timeout: 30000
+          }));
+          const $ddg = cheerio.load(ddgResponse.data);
+          let foundInDDG = 0;
+          $ddg('.result').each((i, el) => {
+            const title = $ddg(el).find('.result__title').text().trim();
+            const link = $ddg(el).find('.result__a').attr('href');
+            const snippet = $ddg(el).find('.result__snippet').text().trim();
+            if (title && link) {
+              const finalLink = link.startsWith('//') ? 'https:' + link : link;
+              if (!results.find(r => r.link === finalLink)) {
+                results.push({ title, link: finalLink, snippet, source: 'DuckDuckGo' });
+                foundInDDG++;
+              }
             }
-          }
-        });
-      } catch (e: any) {
-        console.error('DDG fallback failed:', e.message);
+          });
+          if (foundInDDG > 0) break;
+          ddgRetries++;
+        } catch (e: any) {
+          console.error(`DDG fallback attempt ${ddgRetries + 1} failed:`, e.message);
+          ddgRetries++;
+          if (ddgRetries < 2) await sleep(1500);
+        }
       }
     }
 
     // Try Bing if still no results and it's a dork
     if (results.length === 0 && isDork) {
-      try {
-        await sleep(Math.random() * 1000 + 500);
-        const bingUrl = `https://www.bing.com/search?q=${encodeURIComponent(query)}`;
-        const userAgent = USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)];
-        const bingResponse = await searchLimit(() => axios.get(bingUrl, {
-          headers: { 
-            'User-Agent': userAgent,
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-            'Referer': 'https://www.bing.com/'
-          },
-          timeout: 20000
-        }));
-        const $bing = cheerio.load(bingResponse.data);
-        $bing('.b_algo').each((i, el) => {
-          const title = $bing(el).find('h2').text().trim();
-          const link = $bing(el).find('a').attr('href');
-          const snippet = $bing(el).find('.b_caption p').text().trim();
-          if (title && link && !results.find(r => r.link === link)) {
-            results.push({ title, link, snippet, source: 'Bing' });
-          }
-        });
-      } catch (e: any) {
-        console.error('Bing fallback failed:', e.message);
+      let bingRetries = 0;
+      while (bingRetries < 2) {
+        try {
+          console.log(`[Search] Bing attempt ${bingRetries + 1} for: ${query}`);
+          await sleep(Math.random() * 1000 + 500);
+          const bingUrl = `https://www.bing.com/search?q=${encodeURIComponent(query)}`;
+          const userAgent = USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)];
+          const bingResponse = await searchLimit(() => axios.get(bingUrl, {
+            headers: { 
+              'User-Agent': userAgent,
+              'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+              'Referer': 'https://www.bing.com/'
+            },
+            timeout: 30000
+          }));
+          const $bing = cheerio.load(bingResponse.data);
+          let foundInBing = 0;
+          $bing('.b_algo').each((i, el) => {
+            const title = $bing(el).find('h2').text().trim();
+            const link = $bing(el).find('a').attr('href');
+            const snippet = $bing(el).find('.b_caption p').text().trim();
+            if (title && link && !results.find(r => r.link === link)) {
+              results.push({ title, link, snippet, source: 'Bing' });
+              foundInBing++;
+            }
+          });
+          if (foundInBing > 0) break;
+          bingRetries++;
+        } catch (e: any) {
+          console.error(`Bing fallback attempt ${bingRetries + 1} failed:`, e.message);
+          bingRetries++;
+          if (bingRetries < 2) await sleep(1500);
+        }
       }
     }
 
     // Final fallback to Yahoo if still no results
     if (results.length === 0) {
-      try {
-        await sleep(Math.random() * 1000 + 500);
-        const yahooUrl = `https://search.yahoo.com/search?p=${encodeURIComponent(query)}`;
-        const userAgent = USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)];
-        const yahooResponse = await searchLimit(() => axios.get(yahooUrl, {
-          headers: { 
-            'User-Agent': userAgent,
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-            'Referer': 'https://search.yahoo.com/'
-          },
-          timeout: 20000
-        }));
-        const $yahoo = cheerio.load(yahooResponse.data);
-        $yahoo('.algo-sr').each((i, el) => {
-          const title = $yahoo(el).find('h3').text().trim();
-          const link = $yahoo(el).find('a').first().attr('href');
-          const snippet = $yahoo(el).find('.compText').text().trim();
-          if (title && link && !results.find(r => r.link === link)) {
-            results.push({ title, link, snippet, source: 'Yahoo' });
-          }
-        });
-      } catch (e: any) {
-        console.error('Yahoo fallback failed:', e.message);
+      let yahooRetries = 0;
+      while (yahooRetries < 2) {
+        try {
+          console.log(`[Search] Yahoo attempt ${yahooRetries + 1} for: ${query}`);
+          await sleep(Math.random() * 1000 + 500);
+          const yahooUrl = `https://search.yahoo.com/search?p=${encodeURIComponent(query)}`;
+          const userAgent = USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)];
+          const yahooResponse = await searchLimit(() => axios.get(yahooUrl, {
+            headers: { 
+              'User-Agent': userAgent,
+              'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+              'Referer': 'https://search.yahoo.com/'
+            },
+            timeout: 30000
+          }));
+          const $yahoo = cheerio.load(yahooResponse.data);
+          let foundInYahoo = 0;
+          $yahoo('.algo-sr').each((i, el) => {
+            const title = $yahoo(el).find('h3').text().trim();
+            const link = $yahoo(el).find('a').first().attr('href');
+            const snippet = $yahoo(el).find('.compText').text().trim();
+            if (title && link && !results.find(r => r.link === link)) {
+              results.push({ title, link, snippet, source: 'Yahoo' });
+              foundInYahoo++;
+            }
+          });
+          if (foundInYahoo > 0) break;
+          yahooRetries++;
+        } catch (e: any) {
+          console.error(`Yahoo fallback attempt ${yahooRetries + 1} failed:`, e.message);
+          yahooRetries++;
+          if (yahooRetries < 2) await sleep(1500);
+        }
       }
     }
 

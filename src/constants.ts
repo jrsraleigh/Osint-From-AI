@@ -2,10 +2,10 @@ import { OSINTTool, ToolGroup } from './types';
 
 export const CATEGORY_SITES = {
   social: [
-    'github.com', 'twitter.com', 'instagram.com', 'reddit.com', 'facebook.com', 'tiktok.com', 'pinterest.com', 'tumblr.com', 'snapchat.com', 'mastodon.social', 'vk.com', 'ok.ru', 'weibo.com', 'zhihu.com', 'tieba.baidu.com', 'mewe.com', 'gab.com', 'gettr.com', 'truthsocial.com', 'bere.al', 'lemon8-app.com', 'threads.net', 'bsky.app', 'cohost.org', 'post.news', 't2.social', 'hive.social', 'counter.social', 'parler.com', 'rumble.com', 'odysee.com', 'bitchute.com', 'dailymotion.com', 'bandcamp.com', 'mixcloud.com', 'discogs.com', 'rateyourmusic.com', '500px.com', 'unsplash.com', 'pexels.com', 'pixabay.com', 'shutterstock.com', 'myportfolio.com', 'canva.com', 'figma.com', 'sketch.com', 'invisionapp.com', 'zeplin.io', 'abstract.com', 'framer.com', 'webflow.com', 'linkedin.com', 'quora.com', 'flickr.com', 'vimeo.com', 'soundcloud.com', 'behance.net', 'dribbble.com', 'medium.com', 'deviantart.com', 'goodreads.com', 'last.fm', 'letterboxd.com', 'strava.com', 'komoot.com', 'alltrails.com', 'fitbit.com', 'myfitnesspal.com', 'duolingo.com', 'codecademy.com', 'freecodecamp.org', 'khanacademy.org', 'coursera.org', 'udemy.com', 'edx.org', 'skillshare.com'
+    'github.com', 'twitter.com', 'instagram.com', 'reddit.com', 'facebook.com', 'tiktok.com', 'pinterest.com', 'tumblr.com', 'snapchat.com', 'mastodon.social', 'vk.com', 'ok.ru', 'weibo.com', 'zhihu.com', 'tieba.baidu.com', 'mewe.com', 'gab.com', 'gettr.com', 'truthsocial.com', 'bere.al', 'lemon8-app.com', 'threads.net', 'bsky.app', 'cohost.org', 'post.news', 't2.social', 'hive.social', 'counter.social', 'parler.com', 'rumble.com', 'odysee.com', 'bitchute.com', 'dailymotion.com', 'bandcamp.com', 'mixcloud.com', 'discogs.com', 'rateyourmusic.com', '500px.com', 'unsplash.com', 'pexels.com', 'pixabay.com', 'shutterstock.com', 'myportfolio.com', 'canva.com', 'figma.com', 'sketch.com', 'invisionapp.com', 'zeplin.io', 'abstract.com', 'framer.com', 'webflow.com', 'linkedin.com', 'quora.com', 'flickr.com', 'vimeo.com', 'soundcloud.com', 'behance.net', 'dribbble.com', 'medium.com', 'deviantart.com', 'goodreads.com', 'last.fm', 'letterboxd.com', 'strava.com', 'komoot.com', 'alltrails.com', 'fitbit.com', 'myfitnesspal.com', 'duolingo.com', 'codecademy.com', 'freecodecamp.org', 'khanacademy.org', 'coursera.org', 'udemy.com', 'edx.org', 'skillshare.com', 'aminoapps.com', 'band.us', 'newsclapper.com', 'couchsurfing.com', 'eyeem.com', 'foursquare.com', 'glassdoor.com', 'influenster.com', 'italki.com', 'kickstarter.com', 'myspace.com', 'nextdoor.com', 'periscope.tv', 'reverbnation.com', 'scribd.com', 'slideshare.net', 'wattpad.com', 'weheartit.com', 'yelp.com', 'taringa.net', 'skyrock.com', 'hi5.com', 'tagged.com', 'netlog.com', 'bebo.com', 'joindiaspora.com', 'friendi.ca', 'pixelfed.org', 'ello.co', 'meetic.com', 'twoo.com', 'untappd.com', 'wayn.com', 'interpals.net', 'zapera.com', 'xing.com', 'viadeo.com', 'care2.com', 'habbo.com', 'gaiaonline.com', 'imvu.com', 'secondlife.com', 'avakin.com', 'moviestarplanet.com', 'clubcoee.com', 'ourworld.com', 'vampirefreaks.com', 'gothpassions.com', 'mubi.com', 'trakt.tv', 'tvtime.com', 'myanimelist.net', 'anime-planet.com', 'vgmdb.net'
   ],
   chat: [
-    't.me', 'line.me', 'wechat.com', 'discord.com', 'kik.me', 'snapchat.com', 'icq.im', 'mumble.info', 'teamspeak.com', 'slack.com', 'rocket.chat', 'zulip.com', 'matrix.to', 'element.io', 'gitter.im', 'mattermost.com', 'wire.com', 'threema.ch', 'getsession.org', 'keybase.io', 'whatsapp.com', 'messenger.com', 'skype.com', 'viber.com', 'signal.org', 'telegram.org', 'kakao.com', 'zalo.me', 'imo.im', 'botim.me', 'toTok.ai', 'jitsi.org', 'zoom.us', 'google.com/hangouts', 'meet.google.com', 'teams.microsoft.com', 'webex.com', 'bluejeans.com', 'gotomeeting.com', 'discordapp.com', 'guilded.gg', 'revolt.chat', 'chitchat.gg', 'chatstep.com', 'tinychat.com', 'omegle.com', 'emeraldchat.com', 'chatroulette.com', 'bazoocam.org', 'dirtyroulette.com', 'chatrandom.com', 'shagle.com', 'froulette.com', 'camfrog.com', 'paltalk.com', 'raidcall.com', 'ventrilo.com', 'mumble.com', 'teamspeak.org', 'discord.gg', 'groups.google.com', 'groups.yahoo.com', 'discourse.org', 'vanillaforums.com', 'vbulletin.com', 'xenforo.com', 'phpbb.com', 'mybb.com', 'flarum.org', 'nodebb.org', 'viber.me', 'signal.me', 'wa.me', 't.me/s/'
+    't.me', 'line.me', 'wechat.com', 'discord.com', 'kik.me', 'snapchat.com', 'icq.im', 'mumble.info', 'teamspeak.com', 'slack.com', 'rocket.chat', 'zulip.com', 'matrix.to', 'element.io', 'gitter.im', 'mattermost.com', 'wire.com', 'threema.ch', 'getsession.org', 'keybase.io', 'whatsapp.com', 'messenger.com', 'skype.com', 'viber.com', 'signal.org', 'telegram.org', 'kakao.com', 'zalo.me', 'imo.im', 'botim.me', 'toTok.ai', 'jitsi.org', 'zoom.us', 'google.com/hangouts', 'meet.google.com', 'teams.microsoft.com', 'webex.com', 'bluejeans.com', 'gotomeeting.com', 'discordapp.com', 'guilded.gg', 'revolt.chat', 'chitchat.gg', 'chatstep.com', 'tinychat.com', 'omegle.com', 'emeraldchat.com', 'chatroulette.com', 'bazoocam.org', 'dirtyroulette.com', 'chatrandom.com', 'shagle.com', 'froulette.com', 'camfrog.com', 'paltalk.com', 'raidcall.com', 'ventrilo.com', 'mumble.com', 'teamspeak.org', 'discord.gg', 'groups.google.com', 'groups.yahoo.com', 'discourse.org', 'vanillaforums.com', 'vbulletin.com', 'xenforo.com', 'phpbb.com', 'mybb.com', 'flarum.org', 'nodebb.org', 'viber.me', 'signal.me', 'wa.me', 't.me/s/', 'pumble.com', 'flock.com', 'ryver.com', 'twist.com', 'fleep.io', 'troopmessenger.com', 'brosix.com', 'outputmessenger.com', 'messenger.com', 'kakaotalk.com', 'zalo.me', 'imo.im', 'botim.me', 'totok.ai', 'jitsi.org', 'bbm.com', 'paltalk.com', 'camfrog.com', 'tinychat.com', 'chatroulette.com', 'omegle.com', 'emeraldchat.com', 'bazoocam.org', 'dirtyroulette.com', 'chatrandom.com', 'shagle.com', 'froulette.com', 'camsurf.com', 'luckycrush.live', 'faceflow.com', 'chatterino.com', 'polari.org', 'hexchat.github.io', 'quassel-irc.org', 'adiirc.com', 'icechat.net', 'hydrairc.com', 'kvirc.net', 'konversation.kde.org', 'weechat.org', 'irssi.org', 'echt.chat', 'wireguard.com', 'tailscale.com', 'zerotier.com', 'vpn.net', 'radmin-vpn.com', 'softether.org', 'openvpn.net', 'nordvpn.com', 'expressvpn.com', 'surfshark.com', 'cyberghostvpn.com', 'protonvpn.com', 'mullvad.net', 'ivpn.net', 'windscribe.com', 'tunnelbear.com', 'hotspotshield.com', 'vyprvpn.com', 'strongvpn.com', 'purevpn.com', 'zenmate.com', 'trust.zone', 'buffered.com', 'safervpn.com', 'torguard.net', 'airvpn.org', 'perfect-privacy.com', 'vpnarea.com', 'btcvpn.io', 'monerovpn.io'
   ],
   dating: [
     'tinder.com', 'bumble.com', 'hinge.co', 'okcupid.com', 'pof.com', 'match.com', 'zoosk.com', 'badoo.com', 'tagged.com', 'hi5.com', 'meetme.com', 'skout.com', 'lovoo.com', 'jaumo.com', 'mamba.ru', 'ashleymadison.com', 'seeking.com', 'sugarbook.com', 'secretbenefits.com', 'whatsyourprice.com', 'adultfriendfinder.com', 'coffeemeetsbagel.com', 'happn.com', 'grindr.com', 'scruff.com', 'jackd.com', 'hornet.com', 'weareher.com', 'eharmony.com', 'elitesingles.com', 'silversingles.com', 'christianmingle.com', 'jdate.com', 'blackpeoplemeet.com', 'ourtime.com', 'singleparentmeet.com', 'farmersonly.com', 'academic-singles.com', 'be2.com', 'parship.com', 'edarlin.com', 'meetic.com', 'lexa.nl', 'neu.de', 'loveaholics.com', 'naughtydate.com', 'benaughty.com', 'flirt.com', 'iamnaughty.com', 'casualx.app', 'pure.app', 'feeld.co', '3fun.app', '3somer.app', 'clover.co', 'tastebuds.fm', 'tantanapp.com', 'soulapp.me', 'blued.com', 'growlr.com', 'adam4adam.com', 'squirt.org', 'recon.com', 'fetlife.com', 'kink.com', 'alt.com', 'collarspace.com', 'darkyere.com', 'slayerment.com', 'vampirepassions.com', 'gothicmatch.com', 'emo-dating.com', 'gothscene.com', 'metalhead.dating'
@@ -14,22 +14,22 @@ export const CATEGORY_SITES = {
     'venmo.com', 'cash.app', 'paypal.me', 'revolut.me', 'wise.com', 'zellepay.com', 'stripe.com', 'square.site', 'plaid.com', 'robinhood.com', 'coinbase.com', 'binance.com', 'kraken.com', 'kucoin.com', 'crypto.com', 'metamask.io', 'etherscan.io', 'bscscan.com', 'solscan.io', 'polygonscan.com', 'tradingview.com', 'stocktwits.com', 'seekingalpha.com', 'investing.com', 'marketwatch.com', 'finance.yahoo.com', 'bloomberg.com', 'forbes.com', 'fortune.com', 'cnbc.com', 'businessinsider.com', 'economist.com', 'ft.com', 'wsj.com'
   ],
   nsfw: [
-    'onlyfans.com', 'fansly.com', 'pornhub.com', 'xvideos.com', 'xnxx.com', 'xhamster.com', 'chaturbate.com', 'cam4.com', 'bongacams.com', 'stripchat.com', 'livejasmin.com', 'manyvids.com', 'clips4sale.com', 'iwantclips.com', 'loyalfans.com', 'pocketstars.com', 'fapello.com', 'thothub.to', 'coomer.party', 'kemono.party', 'simpcity.su', 'vipergirls.to', 'planetsuzy.org', 'adultwork.com', 'escort-directory.com', 'eurogirlsescort.com', 'slixa.com', 'eros.com', 'yesbackpage.com', 'bedpage.com', 'cityxguide.com', 'rubratings.com', 'massageanywhere.com', 'listcrawler.com', 'skipthegames.com', 'megapersons.com', 'locanto.com', 'doublelist.com', 'squirt.org', 'adam4adam.com', 'fetlife.com', 'recon.com', 'kink.com', 'modelmayhem.com', 'purpleport.com', 'starnow.com', 'castingcall.club', 'backstage.com', 'redtube.com', 'youporn.com', 'tube8.com', 'spankbang.com', 'eporner.com', 'tnaflix.com', 'motherless.com', 'heavy-r.com', 'efukt.com', 'documentingreality.com', 'theync.com', 'kaotic.com', 'goregrish.com', 'crazyshit.com', 'rule34.xxx', 'gelbooru.com', 'danbooru.donmai.us', 'e621.net', 'furaffinity.net', 'inkbunny.net', 'pixiv.net', 'hentai-foundry.com', 'nhentai.net', 'hitomi.la', 'tsumino.com', 'pururin.to', 'e-hentai.org', 'hanime.tv', 'hentaihaven.xxx', 'multporn.net', '8muses.com', 'doujins.com'
+    'onlyfans.com', 'fansly.com', 'pornhub.com', 'xvideos.com', 'xnxx.com', 'xhamster.com', 'chaturbate.com', 'cam4.com', 'bongacams.com', 'stripchat.com', 'livejasmin.com', 'manyvids.com', 'clips4sale.com', 'iwantclips.com', 'loyalfans.com', 'pocketstars.com', 'fapello.com', 'thothub.to', 'coomer.party', 'kemono.party', 'simpcity.su', 'vipergirls.to', 'planetsuzy.org', 'adultwork.com', 'escort-directory.com', 'eurogirlsescort.com', 'slixa.com', 'eros.com', 'yesbackpage.com', 'bedpage.com', 'cityxguide.com', 'rubratings.com', 'massageanywhere.com', 'listcrawler.com', 'skipthegames.com', 'megapersons.com', 'locanto.com', 'doublelist.com', 'squirt.org', 'adam4adam.com', 'fetlife.com', 'recon.com', 'kink.com', 'modelmayhem.com', 'purpleport.com', 'starnow.com', 'castingcall.club', 'backstage.com', 'redtube.com', 'youporn.com', 'tube8.com', 'spankbang.com', 'eporner.com', 'tnaflix.com', 'motherless.com', 'heavy-r.com', 'efukt.com', 'documentingreality.com', 'theync.com', 'kaotic.com', 'goregrish.com', 'crazyshit.com', 'rule34.xxx', 'gelbooru.com', 'danbooru.donmai.us', 'e621.net', 'furaffinity.net', 'inkbunny.net', 'pixiv.net', 'hentai-foundry.com', 'nhentai.net', 'hitomi.la', 'tsumino.com', 'pururin.to', 'e-hentai.org', 'hanime.tv', 'hentaihaven.xxx', 'multporn.net', '8muses.com', 'doujins.com', 'luscious.net', 'hbrowse.com', 'simply-hentai.com', 'fakku.net', 'hentai2read.com', 'hentaihere.com', 'mama-hentai.com', 'readhentai.com', 'asmhentai.com', 'hentaivideoworld.com', 'tmohentai.com', 'verhentai.com', 'hentaisage.com', 'hentai-pulse.com', 'hentai-img.com', 'hentai-cosplays.com', 'hentai-moon.com', 'hentai-pros.com', 'hentai-galaxy.com', 'hentai-fox.com', 'hentai-cafe.com', 'hentai-lib.com', 'hentai-era.com', 'hentai-zone.com', 'hentai-network.com', 'hentai-paradise.com', 'hentai-stream.com', 'hentai-world.com', 'hentai-hub.com', 'hentai-room.com', 'hentai-garden.com', 'hentai-house.com', 'hentai-manga.com', 'hentai-comic.com', 'hentai-art.com', 'hentai-image.com', 'hentai-picture.com', 'hentai-gallery.com', 'hentai-collection.com', 'hentai-archive.com', 'hentai-vault.com', 'hentai-nexus.com', 'hhv2.com', 'hentai-cloud.com', 'hentai-storage.com', 'hentai-box.com', 'hentai-drive.com', 'hc2.com', 'hentai-master.com', 'hentai-lord.com', 'hentai-king.com', 'hentai-queen.com', 'hentai-prince.com', 'hentai-princess.com', 'hentai-knight.com', 'hentai-slayer.com', 'hentai-hunter.com'
   ],
   gaming: [
-    'steamcommunity.com', 'xboxgamertag.com', 'psnprofiles.com', 'nintendo.com', 'epicgames.com', 'roblox.com', 'namemc.com', 'twitch.tv', 'kick.com', 'trovo.live', 'dlive.tv', 'battle.net', 'origin.com', 'uplay.com', 'gog.com', 'itch.io', 'gamejolt.com', 'nexusmods.com', 'curseforge.com', 'speedrun.com', 'tracker.gg', 'op.gg', 'faceit.com', 'play.esea.net', 'challengermode.com', 'battlefy.com', 'smash.gg', 'liquipedia.net', 'anilist.co', 'kitsu.io'
+    'steamcommunity.com', 'xboxgamertag.com', 'psnprofiles.com', 'nintendo.com', 'epicgames.com', 'roblox.com', 'namemc.com', 'twitch.tv', 'kick.com', 'trovo.live', 'dlive.tv', 'battle.net', 'origin.com', 'uplay.com', 'gog.com', 'itch.io', 'gamejolt.com', 'nexusmods.com', 'curseforge.com', 'speedrun.com', 'tracker.gg', 'op.gg', 'faceit.com', 'play.esea.net', 'challengermode.com', 'battlefy.com', 'smash.gg', 'liquipedia.net', 'anilist.co', 'kitsu.io', 'u.gg', 'mobafire.com', 'dotabuff.com', 'hltv.org', 'overbuff.com', 'tracker.network', 'sc2replaystats.com', 'warcraftlogs.com', 'fflogs.com', 'raider.io', 'wowprogress.com', 'mmo-champion.com', 'wowhead.com', 'hearthpwn.com', 'icy-veins.com', 'mtggoldfish.com', 'hearthstonetopdecks.com', 'tappedout.net', 'deckstats.net', 'moxfield.com', 'cardmarket.com', 'tcgplayer.com', 'poptropica.com', 'neopets.com', 'webkinz.com', 'animaljam.com', 'starstable.com', 'howrse.com', 'flightrising.com', 'dragonadopters.com', 'chickenonaraft.com', 'kongregate.com', 'armorgames.com', 'newgrounds.com', 'miniclip.com', 'pogo.com', 'addictinggames.com', 'crazygames.com', 'y8.com', 'kizi.com', 'friv.com', 'coolmathgames.com', 'chess.com', 'lichess.org', 'playok.com', 'boardgamearena.com', 'tabletopia.com', 'vassalengine.org', 'roll20.net', 'foundryvtt.com', 'dndbeyond.com', 'worldanvil.com', 'obsidianportal.com', 'myth-weavers.com', 'rpg.stackexchange.com', 'giantitp.com', 'enworld.org', 'rpg.net', 'rpggeek.com', 'boardgamegeek.com', 'videogamegeek.com', 'gamefaqs.gamespot.com', 'gamespot.com', 'ign.com', 'kotaku.com', 'polygon.com', 'destructoid.com', 'rockpapershotgun.com', 'eurogamer.net', 'pcgamer.com', 'gematsu.com', 'siliconera.com', 'nintendolife.com', 'pushsquare.com', 'purexbox.com', 'shacknews.com', 'dualshockers.com', 'gamingbolt.com', 'gamerant.com', 'pockettactics.com', 'toucharcade.com', 'mmorpg.com', 'massivelyop.com', 'onrpg.com', 'mmobomb.com', 'mmohuts.com', 'rpgwatch.com', 'rpgcodex.net', 'gamedev.net', 'polycount.com', 'zbrushcentral.com', 'artstation.com', 'sketchfab.com', 'behance.net', 'deviantart.com', 'furaffinity.net', 'inkbunny.net', 'pixiv.net', 'patreon.com', 'subscribestar.com', 'gumroad.com'
   ],
   voip: [
-    'skype.com', 'viber.com', 'wa.me', 'signal.me', 'zello.me', 'voxer.com', 'voice.google.com', 'whatsapp.com', 'telegram.org', 'line.me', 'wechat.com', 'kakao.com', 'zalo.me', 'imo.im', 'botim.me', 'toTok.ai', 'signal.org', 'discord.com', 'slack.com', 'teams.microsoft.com', 'zoom.us', 'webex.com', 'bluejeans.com', 'gotomeeting.com', 'ringcentral.com', '8x8.com', 'vonage.com', 'dialpad.com', 'grasshopper.com', 'ooma.com', 'magicjack.com', 'net2phone.com', 'intermedia.com', 'nextiva.com', 'fuze.com', 'starleaf.com', 'lifesize.com', 'pumble.com', 'flock.com', 'ryver.com', 'twist.com', 'fleep.io', 'troopmessenger.com', 'brosix.com', 'outputmessenger.com', 'messenger.com', 'facebook.com/messenger', 'instagram.com/direct', 'twitter.com/messages', 'linkedin.com/messaging', 'snapchat.com/chat', 'tiktok.com/messages', 'reddit.com/chat', 'quora.com/messages', 'tumblr.com/messages', 'pinterest.com/messages', 'flickr.com/messages', 'vimeo.com/messages', 'soundcloud.com/messages', 'behance.net/messages', 'dribbble.com/messages', 'medium.com/messages', 'deviantart.com/messages', 'goodreads.com/messages', 'last.fm/messages', 'letterboxd.com/messages', 'strava.com/messages', 'komoot.com/messages', 'alltrails.com/messages', 'fitbit.com/messages', 'myfitnesspal.com/messages', 'duolingo.com/messages'
+    'skype.com', 'viber.com', 'wa.me', 'signal.me', 'zello.me', 'voxer.com', 'voice.google.com', 'whatsapp.com', 'telegram.org', 'line.me', 'wechat.com', 'kakao.com', 'zalo.me', 'imo.im', 'botim.me', 'toTok.ai', 'signal.org', 'discord.com', 'slack.com', 'teams.microsoft.com', 'zoom.us', 'webex.com', 'bluejeans.com', 'gotomeeting.com', 'ringcentral.com', '8x8.com', 'vonage.com', 'dialpad.com', 'grasshopper.com', 'ooma.com', 'magicjack.com', 'net2phone.com', 'intermedia.com', 'nextiva.com', 'fuze.com', 'starleaf.com', 'lifesize.com', 'pumble.com', 'flock.com', 'ryver.com', 'twist.com', 'fleep.io', 'troopmessenger.com', 'brosix.com', 'outputmessenger.com', 'messenger.com', 'facebook.com/messenger', 'instagram.com/direct', 'twitter.com/messages', 'linkedin.com/messaging', 'snapchat.com/chat', 'tiktok.com/messages', 'reddit.com/chat', 'quora.com/messages', 'tumblr.com/messages', 'pinterest.com/messages', 'flickr.com/messages', 'vimeo.com/messages', 'soundcloud.com/messages', 'behance.net/messages', 'dribbble.com/messages', 'medium.com/messages', 'deviantart.com/messages', 'goodreads.com/messages', 'last.fm/messages', 'letterboxd.com/messages', 'strava.com/messages', 'komoot.com/messages', 'alltrails.com/messages', 'fitbit.com/messages', 'myfitnesspal.com/messages', 'duolingo.com/messages', 'sideline.com', 'burnerapp.com', 'hushed.com', 'pinger.com', 'textplus.com', 'talkatone.com', 'dingtone.me', 'telosapp.com', 'freetone.com', 'textmeup.com', '2ndline.co', 'flyp.com', 'grooveip.com', 'line2.com', 'mightytext.net', 'pushbullet.com'
   ],
   texting: [
-    'textnow.com', 'textfree.us', 'sideline.com', 'burnerapp.com', 'hushed.com', 'pinger.com', 'textplus.com', 'talkatone.com', 'dingtone.me', 'telosapp.com', 'freetone.com', 'textmeup.com', '2ndline.co', 'flyp.com', 'grooveip.com', 'line2.com', 'grasshopper.com', 'mightytext.net', 'pushbullet.com', 'joinjoaomgcd.appspot.com'
+    'textnow.com', 'textfree.us', 'sideline.com', 'burnerapp.com', 'hushed.com', 'pinger.com', 'textplus.com', 'talkatone.com', 'dingtone.me', 'telosapp.com', 'freetone.com', 'textmeup.com', '2ndline.co', 'flyp.com', 'grooveip.com', 'line2.com', 'grasshopper.com', 'mightytext.net', 'pushbullet.com', 'joinjoaomgcd.appspot.com', 'plivo.com', 'twilio.com', 'messagebird.com', 'nexmo.com', 'sinch.com', 'bandwidth.com', 'infobip.com', 'telesign.com', 'vonage.com', 'ringcentral.com'
   ],
   selling: [
-    'ebay.com', 'etsy.com', 'amazon.com', 'poshmark.com', 'mercari.com', 'depop.com', 'vinted.com', 'grailed.com', 'stockx.com', 'goat.com', 'offerup.com', 'letgo.com', 'craigslist.org', 'facebook.com', 'myshopify.com', 'mybigcommerce.com', 'gumroad.com', 'ko-fi.com', 'patreon.com', 'buymeacoffee.com', 'fanbox.cc', 'subscribestar.com', 'sellfy.com', 'payhip.com', 'sendowl.com', 'fetchapp.com'
+    'ebay.com', 'etsy.com', 'amazon.com', 'poshmark.com', 'mercari.com', 'depop.com', 'vinted.com', 'grailed.com', 'stockx.com', 'goat.com', 'offerup.com', 'letgo.com', 'craigslist.org', 'facebook.com', 'myshopify.com', 'mybigcommerce.com', 'gumroad.com', 'ko-fi.com', 'patreon.com', 'buymeacoffee.com', 'fanbox.cc', 'subscribestar.com', 'sellfy.com', 'payhip.com', 'sendowl.com', 'fetchapp.com', 'redbubble.com', 'society6.com', 'zazzle.com', 'teepublic.com', 'spreadshirt.com', 'threadless.com', 'spoonflower.com', 'minted.com', 'artpal.com', 'fineartamerica.com', 'saatchiart.com', 'artfinder.com', 'ugallery.com', 'turningart.com', 'riseart.com', 'singulart.com', 'artsper.com', 'artsy.net'
   ],
   blog: [
-    'medium.com', 'substack.com', 'wordpress.com', 'blogspot.com', 'tumblr.com', 'ghost.io', 'livejournal.com', 'dreamwidth.org', 'pillowfort.social', 'write.as', 'post.news', 'cohost.org', 'hashnode.com', 'dev.to', 'hackernoon.com', 'zhihu.com', 'quora.com', 'hubpages.com', 'steemit.com', 'minds.com', 'wixsite.com', 'squarespace.com', 'weebly.com', 'jimdosite.com', 'tilda.ws', 'webflow.io'
+    'medium.com', 'substack.com', 'wordpress.com', 'blogspot.com', 'tumblr.com', 'ghost.io', 'livejournal.com', 'dreamwidth.org', 'pillowfort.social', 'write.as', 'post.news', 'cohost.org', 'hashnode.com', 'dev.to', 'hackernoon.com', 'zhihu.com', 'quora.com', 'hubpages.com', 'steemit.com', 'minds.com', 'wixsite.com', 'squarespace.com', 'weebly.com', 'jimdosite.com', 'tilda.ws', 'webflow.io', 'read.cv', 'polywork.com', 'contra.com', 'layers.to', 'bento.me', 'linktr.ee', 'beacons.ai', 'carrd.co', 'solo.to', 'about.me'
   ]
 };
 
@@ -40,6 +40,10 @@ export const MARKET_DORK = 'site:amazon.com+OR+site:ebay.com+OR+site:etsy.com+OR
 export const DATING_DORK = 'site:tinder.com+OR+site:bumble.com+OR+site:hinge.co+OR+site:okcupid.com+OR+site:pof.com+OR+site:match.com+OR+site:zoosk.com+OR+site:badoo.com+OR+site:tagged.com+OR+site:hi5.com+OR+site:meetme.com+OR+site:skout.com+OR+site:lovoo.com+OR+site:jaumo.com+OR+site:mamba.ru+OR+site:badoodata.com+OR+site:ashleymadison.com+OR+site:seeking.com+OR+site:sugarbook.com+OR+site:secretbenefits.com+OR+site:whatsyourprice.com+OR+site:missy.com+OR+site:adultfriendfinder.com+OR+site:alt.com+OR+site:fetlife.com+OR+site:recon.com+OR+site:kink.com';
 
 export const GLOBAL_SOCIAL_NSFW_DORK = `${SOCIAL_DORK}+OR+${NSFW_DORK}+OR+${TECH_DORK}+OR+${MARKET_DORK}+OR+${DATING_DORK}`;
+
+export const IDENTITY_PIVOT_DORK = 'site:instagram.com+OR+site:twitter.com+OR+site:facebook.com+OR+site:linkedin.com+OR+site:about.me+OR+site:beacons.ai+OR+site:linktr.ee+OR+site:carrd.co+OR+site:solo.to+OR+site:github.com+OR+site:medium.com+OR+site:quora.com';
+
+export const PHONE_DORK = 'site:facebook.com+OR+site:instagram.com+OR+site:twitter.com+OR+site:linkedin.com+OR+site:truecaller.com+OR+site:whocalled.us+OR+site:reversephonedirectory.com+OR+site:whitepages.com+OR+site:spokeo.com+OR+site:yelp.com+OR+site:yellowpages.com+OR+site:sync.me+OR+site:revealname.com+OR+site:numlookup.com+OR+site:pastebin.com+OR+site:ghostbin.com+OR+site:controlc.com+OR+site:dump.to+OR+site:github.com+"{query}"';
 
 
 
@@ -155,6 +159,34 @@ export const TOOL_GROUPS: ToolGroup[] = [
     description: 'Systematic approach to identifying and verifying social media presence across hundreds of platforms including niche and adult sites.',
     toolIds: ['2', '19', '51', '52', '53', '77', '81', '71', '72'],
     suggestedSequence: ['Sherlock', 'Maigret', 'Deep Social Scan', 'WhatsMyName Web', 'UserSearch.org', 'SocialCatfish', 'OnlySearch', 'Deep NSFW Scan']
+  },
+  {
+    id: 'g17',
+    name: 'Physical Identity & Address Discovery',
+    description: 'Advanced multi-stage workflow to locate a target\'s actual legal name, current physical address, and historical locations.',
+    toolIds: ['100', '101', '102', '103', '105', '11', '32', '104', '106', '87'],
+    suggestedSequence: ['ThatsThem', 'TruePeopleSearch', 'FastPeopleSearch', 'SearchPeopleFree', 'Webmii', 'EPIEOS', 'OpenCorporates', 'Zillow', 'CourtListener', 'AI Deep Scan Analyst']
+  },
+  {
+    id: 'g18',
+    name: 'Username to Physical Identity Bridge',
+    description: 'Bridges the gap between a simple username and a legal physical identity. Uses social footprinting to extract names, emails, and locations.',
+    toolIds: ['2', '19', '107', '51', '52', '71', '11', '87', '100', '101'],
+    suggestedSequence: ['Sherlock', 'Maigret', 'Bio-Identity Extractor', 'WhatsMyName Web', 'SocialCatfish', 'EPIEOS', 'AI Deep Scan Analyst', 'ThatsThem', 'TruePeopleSearch']
+  },
+  {
+    id: 'g19',
+    name: 'Advanced Identity Unmasking',
+    description: 'Comprehensive multi-stage investigation targeting real-world identity from a username. Includes profile discovery, bio analysis, image forensic metadata, regional data scouting, and specialized search records.',
+    toolIds: ['52', '19', '107', '109', '110', '108', '71', '87'],
+    suggestedSequence: ['WhatsMyName Web', 'Maigret', 'Bio-Identity Extractor', 'ExifTool Online', 'Regional Identity Scout', 'Spokeo', 'SocialCatfish', 'AI Deep Scan Analyst']
+  },
+  {
+    id: 'g20',
+    name: 'Phone Number Identity Discovery',
+    description: 'Unmasks the owner of a phone number by correlating caller ID data, public records, and social registry pivots.',
+    toolIds: ['90', '111', '112', '113', '114', '115', '100', '101', '108', '71', '87'],
+    suggestedSequence: ['Truecaller', 'NumLookup', 'SpyDialer', 'ReversePhoneCheck', 'AI Phone Intelligence Dorker', 'AI Phone Dork Engine', 'ThatsThem', 'TruePeopleSearch', 'Spokeo', 'SocialCatfish', 'AI Deep Scan Analyst']
   }
 ];
 
@@ -162,7 +194,7 @@ export const OSINT_TOOLS: OSINTTool[] = [
   {
     id: '77',
     name: 'Deep Social Scan',
-    description: 'Automated search across top 75+ social media platforms.',
+    description: 'Automated search across top 150+ social media platforms.',
     url: 'https://www.google.com/search?q="{query}"',
     searchUrl: `https://www.google.com/search?q="{query}"+(${CATEGORY_SITES.social.map(s => 'site:' + s).join('+OR+')})`,
     category: 'Social Media',
@@ -172,7 +204,7 @@ export const OSINT_TOOLS: OSINTTool[] = [
   {
     id: '78',
     name: 'Deep Chat Scan',
-    description: 'Automated search across top 75+ chat and messaging platforms.',
+    description: 'Automated search across top 100+ chat and messaging platforms.',
     url: 'https://www.google.com/search?q="{query}"',
     searchUrl: `https://www.google.com/search?q="{query}"+(${CATEGORY_SITES.chat.map(s => 'site:' + s).join('+OR+')})`,
     category: 'Social Media',
@@ -182,7 +214,7 @@ export const OSINT_TOOLS: OSINTTool[] = [
   {
     id: '79',
     name: 'Deep Dating Scan',
-    description: 'Automated search across top 75+ dating platforms.',
+    description: 'Automated search across top 100+ dating platforms.',
     url: 'https://www.google.com/search?q="{query}"',
     searchUrl: `https://www.google.com/search?q="{query}"+(${CATEGORY_SITES.dating.map(s => 'site:' + s).join('+OR+')})`,
     category: 'Social Media',
@@ -192,7 +224,7 @@ export const OSINT_TOOLS: OSINTTool[] = [
   {
     id: '80',
     name: 'Deep Financial Scan',
-    description: 'Automated search across top 30+ financial and crypto platforms.',
+    description: 'Automated search across top 50+ financial and crypto platforms.',
     url: 'https://www.google.com/search?q="{query}"',
     searchUrl: `https://www.google.com/search?q="{query}"+(${CATEGORY_SITES.financial.map(s => 'site:' + s).join('+OR+')})`,
     category: 'Financial',
@@ -202,7 +234,7 @@ export const OSINT_TOOLS: OSINTTool[] = [
   {
     id: '81',
     name: 'Deep NSFW Scan',
-    description: 'Automated search across top 75+ NSFW and adult platforms.',
+    description: 'Automated search across top 150+ NSFW and adult platforms.',
     url: 'https://www.google.com/search?q="{query}"',
     searchUrl: `https://www.google.com/search?q="{query}"+(${CATEGORY_SITES.nsfw.map(s => 'site:' + s).join('+OR+')})`,
     category: 'Social Media',
@@ -212,7 +244,7 @@ export const OSINT_TOOLS: OSINTTool[] = [
   {
     id: '82',
     name: 'Deep Gaming Scan',
-    description: 'Automated search across top 35+ gaming and streaming platforms.',
+    description: 'Automated search across top 150+ gaming and streaming platforms.',
     url: 'https://www.google.com/search?q="{query}"',
     searchUrl: `https://www.google.com/search?q="{query}"+(${CATEGORY_SITES.gaming.map(s => 'site:' + s).join('+OR+')})`,
     category: 'Social Media',
@@ -222,7 +254,7 @@ export const OSINT_TOOLS: OSINTTool[] = [
   {
     id: '83',
     name: 'Deep VOIP Scan',
-    description: 'Automated search across top 75+ VOIP and communication platforms.',
+    description: 'Automated search across top 100+ VOIP and communication platforms.',
     url: 'https://www.google.com/search?q="{query}"',
     searchUrl: `https://www.google.com/search?q="{query}"+(${CATEGORY_SITES.voip.map(s => 'site:' + s).join('+OR+')})`,
     category: 'Social Media',
@@ -1264,6 +1296,181 @@ export const OSINT_TOOLS: OSINTTool[] = [
     category: 'Search Engines',
     tags: ['Blog', 'Blogger', 'Search', 'Google'],
     howToUse: 'Use Google Dorking to find specific blogs on the blogspot.com domain.',
+    isFree: true
+  },
+  {
+    id: '100',
+    name: 'ThatsThem',
+    description: 'Free people search by name, address, email, or phone number.',
+    url: 'https://thatsthem.com/',
+    searchUrl: 'https://thatsthem.com/name/{query}',
+    category: 'Search Engines',
+    tags: ['People Search', 'Legal Name', 'Address', 'Identity'],
+    howToUse: 'Enter a name, address, or email to find associated physical addresses and legal names.',
+    isFree: true
+  },
+  {
+    id: '101',
+    name: 'TruePeopleSearch',
+    description: 'Free people search with deep records including current/past addresses and relatives.',
+    url: 'https://www.truepeoplesearch.com/',
+    searchUrl: 'https://www.truepeoplesearch.com/results?name={query}',
+    category: 'Search Engines',
+    tags: ['People Search', 'Deep Records', 'Address', 'Legal Name'],
+    howToUse: 'Search by name or phone to uncover historical addresses, relatives, and persistent identity data.',
+    isFree: true
+  },
+  {
+    id: '102',
+    name: 'FastPeopleSearch',
+    description: 'Reliable people search providing addresses, phone numbers, and age.',
+    url: 'https://www.fastpeoplesearch.com/',
+    searchUrl: 'https://www.fastpeoplesearch.com/name/{query}',
+    category: 'Search Engines',
+    tags: ['People Search', 'Address', 'Phone', 'Identity'],
+    howToUse: 'Find physical locations and verified legal names associated with a target.',
+    isFree: true
+  },
+  {
+    id: '103',
+    name: 'SearchPeopleFree',
+    description: 'Comprehensive people search engine for public records lookup.',
+    url: 'https://www.searchpeoplefree.com/',
+    searchUrl: 'https://www.searchpeoplefree.com/find/{query}',
+    category: 'Search Engines',
+    tags: ['Public Records', 'People Search', 'Identity'],
+    howToUse: 'Access public records to find addresses and full legal names.',
+    isFree: true
+  },
+  {
+    id: '104',
+    name: 'Zillow',
+    description: 'Real estate marketplace to verify property ownership and valuations.',
+    url: 'https://www.zillow.com/',
+    searchUrl: 'https://www.zillow.com/homes/{query}_rb/',
+    category: 'Maps & Geolocation',
+    tags: ['Property', 'Address', 'Real Estate', 'Ownership'],
+    howToUse: 'Enter an address to see property details, history, and often owner-related information via public tax links.',
+    isFree: true
+  },
+  {
+    id: '105',
+    name: 'Webmii',
+    description: 'Global people search engine correlating public data into a web-presence score.',
+    url: 'https://webmii.com/',
+    searchUrl: 'https://webmii.com/people?n={query}',
+    category: 'Social Media',
+    tags: ['People Search', 'Web Presence', 'Identity'],
+    howToUse: 'Correlate social profiles and web mentions to identify a target\'s actual name.',
+    isFree: true
+  },
+  {
+    id: '107',
+    name: 'Bio-Identity Extractor',
+    description: 'Uses Google Dorking to find social media bios that typically contain names, locations, and personal links.',
+    url: 'https://www.google.com/search',
+    searchUrl: `https://www.google.com/search?q="{query}"+(${IDENTITY_PIVOT_DORK})+(lives+OR+location+OR+born+OR+contact+OR+"real+name")`,
+    category: 'Email & Username',
+    tags: ['Dorking', 'Identity', 'Username', 'PII'],
+    howToUse: 'Input a username to find profile bios that mention real-world identity markers like city or full name.',
+    isFree: true
+  },
+  {
+    id: '108',
+    name: 'Spokeo',
+    description: 'People search engine that aggregates data from online and offline sources.',
+    url: 'https://www.spokeo.com/',
+    searchUrl: 'https://www.spokeo.com/social/search?q={query}',
+    category: 'Search Engines',
+    tags: ['People Search', 'Social Media', 'Identity', 'Address'],
+    howToUse: 'Enter a username to search through billions of records from social networks, phone directories, and public records.',
+    isFree: false
+  },
+  {
+    id: '109',
+    name: 'XF Metadata Forensic Analyzer',
+    description: 'Read and analyze meta information in images (EXIF, GPS, IPTC, XMP).',
+    url: 'https://exiftool.org/',
+    searchUrl: 'https://www.google.com/search?q=site:exiftool.org/forum+OR+site:exif-viewer.com+"{query}"',
+    category: 'Images & Video',
+    tags: ['Metadata', 'EXIF', 'GPS', 'Forensics', 'IMINT'],
+    howToUse: 'Analyze profile photos for hidden metadata such as GPS coordinates, camera models, and timestamps that can reveal the target\'s location and device.',
+    isFree: true
+  },
+  {
+    id: '110',
+    name: 'Regional Identity Scout',
+    description: 'Targeted search across international platforms like LINE (Japan), Weibo (China), VK (Russia), and OK.ru.',
+    url: 'https://www.google.com/search',
+    searchUrl: 'https://www.google.com/search?q="{query}"+(site:line.me+OR+site:weibo.com+OR+site:vk.com+OR+site:ok.ru+OR+site:zhihu.com)',
+    category: 'Social Media',
+    tags: ['Regional', 'International', 'Username', 'Global Search'],
+    howToUse: 'Check for the username on major non-Western platforms where users often provide more detailed personal information.',
+    isFree: true
+  },
+  {
+    id: '111',
+    name: 'NumLookup',
+    description: 'Free reverse phone lookup tool providing owner names and carrier details.',
+    url: 'https://www.numlookup.com/',
+    searchUrl: 'https://www.numlookup.com/number/{query}',
+    category: 'Chat & VoIP',
+    tags: ['Phone', 'Reverse Lookup', 'Identity', 'Carrier'],
+    howToUse: 'Enter a phone number to discover the owner\'s name and associated carrier information.',
+    isFree: true
+  },
+  {
+    id: '112',
+    name: 'SpyDialer',
+    description: 'Anonymous reverse phone lookup and voicemail search.',
+    url: 'https://www.spydialer.com/',
+    searchUrl: 'https://www.spydialer.com/search/results?searchtype=phone&q={query}',
+    category: 'Chat & VoIP',
+    tags: ['Phone', 'Reverse Lookup', 'Voicemail', 'Identity'],
+    howToUse: 'Search by phone number to hear voicemails or see names associated with mobile and landline numbers.',
+    isFree: true
+  },
+  {
+    id: '113',
+    name: 'ReversePhoneCheck',
+    description: 'Aggregates public records to identify phone number owners.',
+    url: 'https://www.reversephonecheck.com/',
+    searchUrl: 'https://www.reversephonecheck.com/search/{query}',
+    category: 'Chat & VoIP',
+    tags: ['Phone', 'Public Records', 'Identity'],
+    howToUse: 'Find name and address records linked to a specific phone number.',
+    isFree: true
+  },
+  {
+    id: '114',
+    name: 'AI Phone Intelligence Dorker',
+    description: 'Generates and executes advanced Google Dorks to find phone numbers mentioned across social networks and public registers.',
+    url: 'https://www.google.com/search',
+    searchUrl: `https://www.google.com/search?q="{query}"+(${PHONE_DORK})`,
+    category: 'Chat & VoIP',
+    tags: ['Dorking', 'Phone', 'Identity', 'Social Pivot'],
+    howToUse: 'Enter a phone number to find its mentions on social media bios, registry landing pages, and directory listings.',
+    isFree: true
+  },
+  {
+    id: '115',
+    name: 'AI Phone Dork Engine',
+    description: 'Specialized AI tool that generates dynamic, target-specific Google Dorks for phone numbers, including proximity searches and pattern matching.',
+    url: '#',
+    category: 'Chat & VoIP',
+    tags: ['AI', 'Dorks', 'Phone', 'Advanced Search'],
+    isFree: true,
+    howToUse: 'Input a phone number, and the AI will provide a list of specialized dorks to find internal contact lists, leaked employee directories, and cached social link data.'
+  },
+  {
+    id: '106',
+    name: 'CourtListener',
+    description: 'Free legal search engine for US court records and opinions.',
+    url: 'https://www.courtlistener.com/',
+    searchUrl: 'https://www.courtlistener.com/?q={query}',
+    category: 'Search Engines',
+    tags: ['Legal', 'Court Records', 'Public Records', 'Identity'],
+    howToUse: 'Search for legal names in court records and opinions to find addresses, lawsuits, and related entities.',
     isFree: true
   }
 ];
