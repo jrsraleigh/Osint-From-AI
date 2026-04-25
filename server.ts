@@ -43,13 +43,36 @@ async function startServer() {
 
   // Custom API Keys Middleware
   app.use((req, res, next) => {
-    const customKeys = req.headers['x-custom-api-keys'];
+    let customKeys = req.headers['x-custom-api-keys'];
+    
+    // Also check body if not in header
+    if (!customKeys && req.body && req.body.customApiKeys) {
+      if (typeof req.body.customApiKeys === 'object') {
+        (req as any).customApiKeys = req.body.customApiKeys;
+        return next();
+      }
+      customKeys = req.body.customApiKeys;
+    }
+
     if (customKeys) {
       try {
-        (req as any).customApiKeys = JSON.parse(String(customKeys));
+        const decoded = String(customKeys);
+        if (decoded.trim().startsWith('{')) {
+          (req as any).customApiKeys = JSON.parse(decoded);
+        } else {
+          try {
+            const fromBase64 = Buffer.from(decoded, 'base64').toString('utf8');
+            (req as any).customApiKeys = JSON.parse(fromBase64);
+          } catch (e) {
+            (req as any).customApiKeys = JSON.parse(decoded);
+          }
+        }
       } catch (e) {
         console.warn('Failed to parse custom API keys header:', e.message);
+        (req as any).customApiKeys = {};
       }
+    } else {
+      (req as any).customApiKeys = {};
     }
     next();
   });
@@ -206,7 +229,10 @@ async function startServer() {
         const rdapResponse = await axios.get(`https://rdap.org/domain/${query}`, { 
           timeout: 8000, 
           validateStatus: () => true,
-          headers: { 'Accept': 'application/json' }
+          headers: { 
+            'Accept': 'application/json',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+          }
         });
         
         if (rdapResponse.status === 200 && rdapResponse.data && !rdapResponse.data.error) {
@@ -239,10 +265,21 @@ async function startServer() {
             let directRdapUrl = '';
             if (['com', 'net'].includes(tld || '')) directRdapUrl = `https://rdap.verisign.com/com/v1/domain/${query}`;
             else if (['org'].includes(tld || '')) directRdapUrl = `https://rdap.publicinterestregistry.net/rdap/domain/${query}`;
+            else if (['info'].includes(tld || '')) directRdapUrl = `https://rdap.identitydigital.co/rdap/domain/${query}`;
+            else if (['biz'].includes(tld || '')) directRdapUrl = `https://rdap.nic.biz/domain/${query}`;
+            else if (['us'].includes(tld || '')) directRdapUrl = `https://rdap.nic.us/domain/${query}`;
+            else if (['io'].includes(tld || '')) directRdapUrl = `https://rdap.nic.io/domain/${query}`;
             
             if (directRdapUrl) {
               console.log(`[WHOIS] Trying direct RDAP for ${query}: ${directRdapUrl}`);
-              const directRes = await axios.get(directRdapUrl, { timeout: 5000, validateStatus: () => true });
+              const directRes = await axios.get(directRdapUrl, { 
+                timeout: 5000, 
+                validateStatus: () => true,
+                headers: {
+                  'Accept': 'application/json',
+                  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+                }
+              });
               if (directRes.status === 200 && directRes.data) {
                 results = directRes.data;
                 console.log(`[WHOIS] Direct RDAP success for ${query}`);
@@ -575,191 +612,120 @@ async function startServer() {
     }
 
     const results: any[] = [];
-
-    // Try Google first with a retry mechanism
-    let googleRetries = 0;
-    const maxGoogleRetries = 2;
     
-    while (googleRetries <= maxGoogleRetries) {
-      try {
-        const waitTime = googleRetries === 0 ? (Math.random() * 1000 + 500) : (Math.random() * 3000 * Math.pow(2, googleRetries));
-        await sleep(waitTime);
-        
-        const userAgent = USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)];
-        const googleUrl = `https://www.google.com/search?q=${encodeURIComponent(query)}&num=30`;
-        
-        const response = await searchLimit(() => axios.get(googleUrl, {
-          headers: {
-            'User-Agent': userAgent,
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-            'Accept-Language': 'en-US,en;q=0.5',
-            'Referer': 'https://www.google.com/',
-            'Connection': 'keep-alive',
-            'Upgrade-Insecure-Requests': '1',
-            'Cache-Control': 'max-age=0'
-          },
-          timeout: 30000,
-          validateStatus: (status) => status < 500 // Don't throw on 429 or 414
-        }));
-        
-        console.log(`[Search] Google status: ${response.status} for query: ${query.substring(0, 50)}...`);
-
-        if (response.status === 429) {
-          console.warn(`[Search] Google rate limit (429) hit, retry ${googleRetries + 1}/${maxGoogleRetries}...`);
+    // Define search functions
+    const searchGoogle = async () => {
+      let googleResults: any[] = [];
+      let googleRetries = 0;
+      const maxGoogleRetries = 2;
+      while (googleRetries <= maxGoogleRetries) {
+        try {
+          const waitTime = googleRetries === 0 ? (Math.random() * 500 + 200) : (Math.random() * 2000 * Math.pow(2, googleRetries));
+          await sleep(waitTime);
+          const response = await axios.get(`https://www.google.com/search?q=${encodeURIComponent(query)}&num=30`, {
+            headers: {
+              'User-Agent': USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)],
+              'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+              'Referer': 'https://www.google.com/',
+              'Connection': 'keep-alive'
+            },
+            timeout: 8000,
+            validateStatus: (status) => status < 500
+          });
+          if (response.status === 429) {
+            googleRetries++;
+            continue;
+          }
+          const $ = cheerio.load(response.data);
+          const selectors = ['div.g', 'div.tF2Cxc', 'div.yuRUbf', 'div.kvH9C', 'div.MjjYud', 'div.sr__group', 'div.BNeawe'];
+          selectors.forEach(selector => {
+            $(selector).each((i, el) => {
+              const title = $(el).find('h3, .vv778b, .BNeawe').first().text().trim();
+              const link = $(el).find('a').first().attr('href');
+              const snippet = $(el).find('div.VwiC3b, .st, div.kb0Bcb, div.LGOjbe, .BNeawe').first().text().trim();
+              if (title && link && link.startsWith('http')) googleResults.push({ title, link, snippet, source: 'Google' });
+            });
+          });
+          if (googleResults.length > 0) break;
           googleRetries++;
-          if (googleRetries > maxGoogleRetries) break;
-          continue;
-        }
+        } catch (e) { break; }
+      }
+      return googleResults;
+    };
 
-        if (response.status === 414) {
-          console.error(`[Search] Google URI Too Long (414) for query: ${query.substring(0, 50)}...`);
-          break; // Chunking should have prevented this, but if it happens, we can't retry
-        }
-
-        const $ = cheerio.load(response.data);
-        const selectors = ['div.g', 'div.tF2Cxc', 'div.yuRUbf', 'div.kvH9C', 'div.Z26q7c', 'div.MjjYud', 'div.sr__group', 'div.BNeawe'];
-        
-        let foundInGoogle = 0;
-        selectors.forEach(selector => {
-          $(selector).each((i, el) => {
-            const title = $(el).find('h3, .vv778b, .BNeawe').first().text().trim();
-            const link = $(el).find('a').first().attr('href');
-            const snippet = $(el).find('div.VwiC3b, .st, div.kb0Bcb, div.LGOjbe, .BNeawe').first().text().trim();
-            
-            if (title && link && link.startsWith('http') && !results.find(r => r.link === link)) {
-              results.push({ title, link, snippet, source: 'Google' });
-              foundInGoogle++;
-            }
-          });
+    const searchDDG = async () => {
+      try {
+        const response = await axios.get(`https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`, {
+          headers: { 'User-Agent': USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)], 'Referer': 'https://duckduckgo.com/' },
+          timeout: 8000
         });
-        
-        console.log(`[Search] Google found ${foundInGoogle} results`);
-        if (results.length > 0) break; // Success
-        googleRetries++; // No results, maybe try again or move on
-      } catch (e: any) {
-        console.error('Google search failed:', e.message);
-        break;
-      }
-    }
+        const $ddg = cheerio.load(response.data);
+        const ddgResults: any[] = [];
+        $ddg('.result').each((i, el) => {
+          const title = $ddg(el).find('.result__title').text().trim();
+          const link = $ddg(el).find('.result__a').attr('href');
+          const snippet = $ddg(el).find('.result__snippet').text().trim();
+          if (title && link) {
+            const finalLink = link.startsWith('//') ? 'https:' + link : link;
+            ddgResults.push({ title, link: finalLink, snippet, source: 'DuckDuckGo' });
+          }
+        });
+        return ddgResults;
+      } catch (e) { return []; }
+    };
 
-    // If Google fails or returns no results, try DuckDuckGo
-    if (results.length === 0) {
-      let ddgRetries = 0;
-      while (ddgRetries < 2) {
-        try {
-          console.log(`[Search] DuckDuckGo attempt ${ddgRetries + 1} for: ${query}`);
-          await sleep(Math.random() * 800 + 400);
-          const ddgUrl = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
-          const userAgent = USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)];
-          const ddgResponse = await searchLimit(() => axios.get(ddgUrl, {
-            headers: { 
-              'User-Agent': userAgent,
-              'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-              'Referer': 'https://duckduckgo.com/'
-            },
-            timeout: 30000
-          }));
-          const $ddg = cheerio.load(ddgResponse.data);
-          let foundInDDG = 0;
-          $ddg('.result').each((i, el) => {
-            const title = $ddg(el).find('.result__title').text().trim();
-            const link = $ddg(el).find('.result__a').attr('href');
-            const snippet = $ddg(el).find('.result__snippet').text().trim();
-            if (title && link) {
-              const finalLink = link.startsWith('//') ? 'https:' + link : link;
-              if (!results.find(r => r.link === finalLink)) {
-                results.push({ title, link: finalLink, snippet, source: 'DuckDuckGo' });
-                foundInDDG++;
-              }
-            }
-          });
-          if (foundInDDG > 0) break;
-          ddgRetries++;
-        } catch (e: any) {
-          console.error(`DDG fallback attempt ${ddgRetries + 1} failed:`, e.message);
-          ddgRetries++;
-          if (ddgRetries < 2) await sleep(1500);
-        }
-      }
-    }
+    const searchBing = async () => {
+      try {
+        const response = await axios.get(`https://www.bing.com/search?q=${encodeURIComponent(query)}`, {
+          headers: { 'User-Agent': USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)], 'Referer': 'https://www.bing.com/' },
+          timeout: 8000
+        });
+        const $bing = cheerio.load(response.data);
+        const bingResults: any[] = [];
+        $bing('.b_algo').each((i, el) => {
+          const title = $bing(el).find('h2').text().trim();
+          const link = $bing(el).find('a').attr('href');
+          const snippet = $bing(el).find('.b_caption p').text().trim();
+          if (title && link) bingResults.push({ title, link, snippet, source: 'Bing' });
+        });
+        return bingResults;
+      } catch (e) { return []; }
+    };
 
-    // Try Bing if still no results and it's a dork
-    if (results.length === 0 && isDork) {
-      let bingRetries = 0;
-      while (bingRetries < 2) {
-        try {
-          console.log(`[Search] Bing attempt ${bingRetries + 1} for: ${query}`);
-          await sleep(Math.random() * 1000 + 500);
-          const bingUrl = `https://www.bing.com/search?q=${encodeURIComponent(query)}`;
-          const userAgent = USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)];
-          const bingResponse = await searchLimit(() => axios.get(bingUrl, {
-            headers: { 
-              'User-Agent': userAgent,
-              'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-              'Referer': 'https://www.bing.com/'
-            },
-            timeout: 30000
-          }));
-          const $bing = cheerio.load(bingResponse.data);
-          let foundInBing = 0;
-          $bing('.b_algo').each((i, el) => {
-            const title = $bing(el).find('h2').text().trim();
-            const link = $bing(el).find('a').attr('href');
-            const snippet = $bing(el).find('.b_caption p').text().trim();
-            if (title && link && !results.find(r => r.link === link)) {
-              results.push({ title, link, snippet, source: 'Bing' });
-              foundInBing++;
-            }
-          });
-          if (foundInBing > 0) break;
-          bingRetries++;
-        } catch (e: any) {
-          console.error(`Bing fallback attempt ${bingRetries + 1} failed:`, e.message);
-          bingRetries++;
-          if (bingRetries < 2) await sleep(1500);
-        }
-      }
-    }
+    const searchYahoo = async () => {
+      try {
+        const response = await axios.get(`https://search.yahoo.com/search?p=${encodeURIComponent(query)}`, {
+          headers: { 'User-Agent': USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)], 'Referer': 'https://search.yahoo.com/' },
+          timeout: 8000
+        });
+        const $yahoo = cheerio.load(response.data);
+        const yahooResults: any[] = [];
+        $yahoo('.algo-sr').each((i, el) => {
+          const title = $yahoo(el).find('h3').text().trim();
+          const link = $yahoo(el).find('a').first().attr('href');
+          const snippet = $yahoo(el).find('.compText').text().trim();
+          if (title && link) yahooResults.push({ title, link, snippet, source: 'Yahoo' });
+        });
+        return yahooResults;
+      } catch (e) { return []; }
+    };
 
-    // Final fallback to Yahoo if still no results
-    if (results.length === 0) {
-      let yahooRetries = 0;
-      while (yahooRetries < 2) {
-        try {
-          console.log(`[Search] Yahoo attempt ${yahooRetries + 1} for: ${query}`);
-          await sleep(Math.random() * 1000 + 500);
-          const yahooUrl = `https://search.yahoo.com/search?p=${encodeURIComponent(query)}`;
-          const userAgent = USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)];
-          const yahooResponse = await searchLimit(() => axios.get(yahooUrl, {
-            headers: { 
-              'User-Agent': userAgent,
-              'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-              'Referer': 'https://search.yahoo.com/'
-            },
-            timeout: 30000
-          }));
-          const $yahoo = cheerio.load(yahooResponse.data);
-          let foundInYahoo = 0;
-          $yahoo('.algo-sr').each((i, el) => {
-            const title = $yahoo(el).find('h3').text().trim();
-            const link = $yahoo(el).find('a').first().attr('href');
-            const snippet = $yahoo(el).find('.compText').text().trim();
-            if (title && link && !results.find(r => r.link === link)) {
-              results.push({ title, link, snippet, source: 'Yahoo' });
-              foundInYahoo++;
-            }
-          });
-          if (foundInYahoo > 0) break;
-          yahooRetries++;
-        } catch (e: any) {
-          console.error(`Yahoo fallback attempt ${yahooRetries + 1} failed:`, e.message);
-          yahooRetries++;
-          if (yahooRetries < 2) await sleep(1500);
-        }
-      }
-    }
+    // Run all searches in parallel with a slightly staggered start for stealth
+    const [gRes, dRes, bRes, yRes] = await Promise.all([
+      searchGoogle(),
+      sleep(400).then(searchDDG),
+      sleep(800).then(searchBing),
+      sleep(1200).then(searchYahoo)
+    ]);
 
-    return results;
+    // Merge and deduplicate
+    const allRaw = [...gRes, ...dRes, ...bRes, ...yRes];
+    const uniqueMap = new Map();
+    allRaw.forEach(r => {
+      if (!uniqueMap.has(r.link)) uniqueMap.set(r.link, r);
+    });
+    
+    return Array.from(uniqueMap.values());
   }
 
   const handleSearch = async (req: any, res: any) => {
@@ -767,7 +733,7 @@ async function startServer() {
     if (!q) return res.status(400).json({ error: 'Query required' });
     
     try {
-      const results = await searchLimit(() => scrapeSearchEngines(String(q)));
+      const results = await scrapeSearchEngines(String(q));
       res.json(results);
     } catch (error) {
       console.error('Search error:', error.message || error);
@@ -838,7 +804,7 @@ async function startServer() {
           'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
           'Accept-Language': 'en-US,en;q=0.9'
         },
-        timeout: 30000,
+        timeout: 10000,
         validateStatus: () => true
       });
       

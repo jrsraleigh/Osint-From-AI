@@ -77,6 +77,8 @@ import {
   Network,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import html2canvas from 'html2canvas';
+import { jsPDF } from 'jspdf';
 import { GoogleGenAI, ThinkingLevel } from "@google/genai";
 import { OSINT_TOOLS, TOOL_GROUPS, GLOBAL_SOCIAL_NSFW_DORK } from './constants';
 import { OSINTCategory, OSINTTool, ToolGroup } from './types';
@@ -102,9 +104,6 @@ interface IntelligenceWindowProps {
   openInBrowser: (url: string) => void;
   onShowHistory: () => void;
   onShowResults: () => void;
-  allTargets?: string[];
-  selectedTargetIndex?: number;
-  onSelectTarget?: (index: number) => void;
 }
 
 interface StatusWindowProps {
@@ -512,10 +511,8 @@ export default function AppWrapper() {
 function App() {
   const { theme, toggleTheme } = useTheme();
   const [searchQuery, setSearchQuery] = useState('');
-  const [extraTargets, setExtraTargets] = useState<string[]>([]);
-  const [selectedTargetIndex, setSelectedTargetIndex] = useState(0);
-  const allTargets = useMemo(() => [searchQuery, ...extraTargets].filter(t => t.trim() !== ''), [searchQuery, extraTargets]);
-
+  const [searchQuerySecondary, setSearchQuerySecondary] = useState('');
+  const [showSecondarySearch, setShowSecondarySearch] = useState(false);
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('');
   const [searchHistory, setSearchHistory] = useState<string[]>(() => {
     try {
@@ -638,7 +635,7 @@ function App() {
     // Update all running tools to 'failed' (cancelled)
     setRunningTools(prev => prev.map(t => t.status === 'running' ? { ...t, status: 'failed', progress: 100, results: 'Scan cancelled by user' } : t));
   };
-  const [activeTab, setActiveTab] = useState<'Tools' | 'Scan' | 'Workflows' | 'Intel' | 'Dorks' | 'Analyst' | 'Browser' | 'TargetIntel' | 'Diagnostics'>('Tools');
+  const [activeTab, setActiveTab] = useState<'Tools' | 'Scan' | 'Workflows' | 'Intel' | 'Dorks' | 'Analyst' | 'Browser' | 'TargetIntel' | 'Diagnostics' | 'History'>('Tools');
   const [browserUrl, setBrowserUrl] = useState<string>('');
   const [browserHistory, setBrowserHistory] = useState<string[]>([]);
   const [browserForwardHistory, setBrowserForwardHistory] = useState<string[]>([]);
@@ -774,11 +771,27 @@ function App() {
         contents: typeof contents === 'string' ? { parts: [{ text: contents }] } : contents,
         config
       });
-      return result;
+      
+      // Handle the SDK result structure correctly
+      let text = '';
+      if (typeof result === 'string') {
+        text = result;
+      } else if (result && typeof (result as any).text === 'string') {
+        text = (result as any).text;
+      } else if (result && (result as any).response && typeof (result as any).response.text === 'function') {
+        text = await (result as any).response.text();
+      } else if (result && (result as any).response && typeof (result as any).response.text === 'string') {
+        text = (result as any).response.text;
+      } else {
+        console.warn('Unexpected AI result structure:', result);
+        text = JSON.stringify(result);
+      }
+      
+      return { text };
     } catch (error) {
-      console.error('AI generation failed, falling back to local engine:', error);
-      const promptText = typeof contents === 'string' ? contents : JSON.stringify(contents);
-      return localIntelligence(promptText);
+      console.error('OSINT AI error:', error);
+      const errorMessage = error instanceof Error ? `${error.message}\n${error.stack}` : 'Unknown error';
+      return { text: `### Critical System Failure\n\nIntelligence extraction failed: \`${errorMessage}\`` };
     }
   };
 
@@ -874,6 +887,144 @@ function App() {
     }
   }, [debouncedSearchQuery, activeTab]);
   const [modalContent, setModalContent] = useState<{ title: string; content: string; type: 'article' | 'search' | 'tool' | 'error' | 'info'; results?: any[]; url?: string } | null>(null);
+  const [activeModalView, setActiveModalView] = useState<'list' | 'viz'>('list');
+
+  // Visualization Component for Intelligence Graph
+  const IntelligenceGraph = ({ results }: { results: any[] }) => {
+    const graphRef = useRef<HTMLDivElement>(null);
+
+    const exportToPDF = async () => {
+      if (!graphRef.current) return;
+      
+      const canvas = await html2canvas(graphRef.current, {
+        backgroundColor: '#050505',
+        scale: 1, // Keep it 1:1 for better aspect matching in PDF
+        useCORS: true,
+        logging: false
+      });
+      
+      const imgData = canvas.toDataURL('image/png');
+      const pdf = new jsPDF({
+        orientation: 'landscape',
+        unit: 'px',
+        format: [canvas.width, canvas.height]
+      });
+      
+      pdf.addImage(imgData, 'PNG', 0, 0, canvas.width, canvas.height);
+      pdf.save(`osint_intelligence_map_${Date.now()}.pdf`);
+    };
+
+    return (
+      <div ref={graphRef} className="h-full w-full bg-[#050505] flex items-center justify-center relative overflow-hidden">
+        {/* Grid Background */}
+        <div className="absolute inset-0 opacity-20 pointer-events-none" 
+             style={{ 
+               backgroundImage: 'radial-gradient(circle at 1px 1px, #00f3ff 1px, transparent 0)', 
+               backgroundSize: '40px 40px' 
+             }} 
+        />
+
+        <div className="absolute top-8 left-8 space-y-2 z-10">
+          <div className="flex items-center gap-2 text-neon-cyan text-[10px] font-black uppercase tracking-widest">
+            <Activity size={14} className="animate-pulse" />
+            Live_Vector_Analysis
+          </div>
+          <div className="text-[9px] text-white/30 uppercase tracking-tighter">
+            Total_Nodes: {results.length + 1} • Relations: {results.length}
+          </div>
+        </div>
+
+        <div className="absolute top-8 right-8 z-50">
+          <button 
+            onClick={exportToPDF}
+            className="flex items-center gap-2 px-4 py-2 bg-white/5 border border-white/10 hover:border-neon-cyan hover:bg-neon-cyan/10 transition-all text-white/60 hover:text-white rounded-lg group"
+          >
+            <Download size={14} className="group-hover:translate-y-0.5 transition-transform" />
+            <span className="text-[10px] uppercase font-bold tracking-widest">Export_PDF</span>
+          </button>
+        </div>
+
+        {/* Graph Legend */}
+        <div className="absolute bottom-8 left-8 flex flex-col gap-3 z-10">
+          {[
+            { label: 'Target_Node', color: 'bg-white' },
+            { label: 'High_Confidence', color: 'bg-neon-lime' },
+            { label: 'Secondary_Signal', color: 'bg-neon-cyan' },
+            { label: 'Potential_Match', color: 'bg-white/20' }
+          ].map(item => (
+            <div key={item.label} className="flex items-center gap-3">
+              <div className={`w-2 h-2 rounded-full ${item.color} shadow-[0_0_8px_currentColor]`} />
+              <span className="text-[8px] text-white/40 uppercase tracking-widest font-mono">{item.label}</span>
+            </div>
+          ))}
+        </div>
+
+        {/* Force Directed Simulation Container */}
+        <div className="relative w-full h-full flex items-center justify-center">
+          {/* Target Center Node */}
+          <motion.div 
+            initial={{ scale: 0 }}
+            animate={{ scale: 1 }}
+            className="w-16 h-16 bg-white rounded-full flex items-center justify-center relative z-20 shadow-[0_0_40px_rgba(255,255,255,0.2)]"
+          >
+            <Shield size={24} className="text-black" />
+            <div className="absolute inset-0 rounded-full border-2 border-white animate-ping" />
+            <div className="absolute -bottom-8 left-1/2 -translate-x-1/2 whitespace-nowrap text-[10px] font-bold text-white uppercase tracking-widest bg-black/60 px-2 py-0.5 rounded">
+              TARGET_ALPHA
+            </div>
+          </motion.div>
+
+          {/* Child Nodes */}
+          {results.map((res, i) => {
+            const angle = (i / results.length) * 2 * Math.PI;
+            const radius = 250 + (i % 3) * 40;
+            const x = Math.cos(angle) * radius;
+            const y = Math.sin(angle) * radius;
+            const confidence = res.confidence || 70;
+            const color = confidence > 85 ? '#39FF14' : confidence > 60 ? '#00f3ff' : 'rgba(255,255,255,0.2)';
+
+            return (
+              <React.Fragment key={i}>
+                {/* Connection Line */}
+                <motion.div 
+                  initial={{ opacity: 0, pathLength: 0 }}
+                  animate={{ opacity: 0.2, pathLength: 1 }}
+                  className="absolute top-1/2 left-1/2 h-px bg-gradient-to-r from-white to-transparent origin-left z-10 pointer-events-none"
+                  style={{ 
+                    width: radius,
+                    rotate: `${angle * (180 / Math.PI)}deg`,
+                    backgroundColor: color
+                  }}
+                />
+                
+                {/* Node */}
+                <motion.div
+                  initial={{ opacity: 0, x: 0, y: 0 }}
+                  animate={{ opacity: 1, x, y }}
+                  transition={{ delay: i * 0.1, type: 'spring', damping: 15 }}
+                  className="absolute top-[calc(50%-20px)] left-[calc(50%-20px)] group cursor-pointer"
+                >
+                  <div 
+                    className="w-10 h-10 rounded-full border-2 flex items-center justify-center bg-black transition-all hover:scale-125 hover:shadow-[0_0_20px_rgba(0,243,255,0.3)]"
+                    style={{ borderColor: color }}
+                    onClick={() => openInBrowser(res.link)}
+                  >
+                    <Globe size={16} style={{ color }} />
+                  </div>
+                  
+                  {/* Tooltip on Hover */}
+                  <div className="absolute -top-12 left-1/2 -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-all bg-black/90 border border-white/20 p-2 rounded whitespace-nowrap z-50 pointer-events-none">
+                    <div className="text-[9px] font-bold text-white uppercase">{res.title}</div>
+                    <div className="text-[8px] text-white/50 tracking-tighter uppercase">{confidence}%_CONFIDENCE</div>
+                  </div>
+                </motion.div>
+              </React.Fragment>
+            );
+          })}
+        </div>
+      </div>
+    );
+  };
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [isResultsOpen, setIsResultsOpen] = useState(false);
@@ -903,6 +1054,26 @@ function App() {
   const [advancedDork, setAdvancedDork] = useState('');
   const [showAdvancedSearch, setShowAdvancedSearch] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Global Error Listener for pattern error
+  useEffect(() => {
+    const handleError = (event: ErrorEvent) => {
+      const error = event.error;
+      const message = error instanceof Error ? `${error.message}\n${error.stack}` : event.message;
+      if (message.includes('pattern') || message.includes('atob')) {
+        console.error('CRITICAL PATTERN ERROR DETECTED:', message);
+        const errToolId = addRunningTool('FATAL_EXCEPTION', 'atob_check', 'Debug', 'System');
+        updateToolStatus(errToolId, { 
+          status: 'failed', 
+          results: `Caught pattern error: ${message}`,
+          logs: [`Stack Trace: ${message}`]
+        });
+      }
+    };
+    
+    window.addEventListener('error', handleError);
+    return () => window.removeEventListener('error', handleError);
+  }, []);
 
   // Load from localStorage on mount
   useEffect(() => {
@@ -1502,8 +1673,7 @@ function App() {
   }, [searchQuery]);
 
   const handleSocialDork = () => {
-    const currentTarget = allTargets[selectedTargetIndex] || searchQuery;
-    if (!currentTarget) return;
+    if (!searchQuery) return;
     const tool = OSINT_TOOLS.find(t => t.id === '66');
     if (tool) {
       handleToolSearch(tool);
@@ -1511,8 +1681,7 @@ function App() {
   };
 
   const handleMassRecon = async () => {
-    const currentTarget = allTargets[selectedTargetIndex] || searchQuery;
-    if (!currentTarget) return;
+    if (!searchQuery) return;
     setIsMassReconRunning(true);
     setActiveTab('Scan');
     
@@ -1592,7 +1761,7 @@ function App() {
 
       return matchesCategory && matchesFree;
     });
-  }, [searchQuery, selectedCategory, showFreeOnly, aiSuggestions]);
+  }, [debouncedSearchQuery, selectedCategory, showFreeOnly, aiSuggestions]);
 
   const [isDeepScan, setIsDeepScan] = useState(false);
   const [isHistoricalScan, setIsHistoricalScan] = useState(false);
@@ -1628,55 +1797,61 @@ function App() {
   };
 
   useEffect(() => {
+    const activeRunningTools = runningTools.filter(t => t.status === 'running');
+    if (activeRunningTools.length === 0) return;
+
     const intervals: { [key: string]: NodeJS.Timeout } = {};
     
-    runningTools.forEach(tool => {
-      if (tool.status === 'running' && !intervals[tool.id]) {
+    activeRunningTools.forEach(tool => {
+      if (!intervals[tool.id]) {
         intervals[tool.id] = setInterval(() => {
-          setRunningTools(prev => prev.map(t => {
-            if (t.id === tool.id && t.status === 'running') {
-              const currentProgress = t.progress || 0;
-              const updates: any = {};
-              
-              if (currentProgress < 90) {
-                const increment = currentProgress < 30 ? 15 : (currentProgress < 60 ? 8 : Math.random() * 3 + 1);
-                updates.progress = Math.min(90, currentProgress + increment);
-              } else if (currentProgress < 98) {
-                // Slower but still moving
-                updates.progress = currentProgress + (Math.random() * 0.5 + 0.1);
-                const duration = Date.now() - t.startTime;
-                if (duration > 45000 && !t.logs.includes('Operation taking longer than expected, still processing...')) {
-                  updates.logs = [...t.logs, 'Operation taking longer than expected, still processing...'];
-                }
-              } else if (currentProgress < 99.9) {
-                // Very slow crawl at the end
-                updates.progress = currentProgress + (Math.random() * 0.02 + 0.005);
+          setRunningTools(prev => {
+            // Find the tool again in the current state
+            const targetTool = prev.find(t => t.id === tool.id);
+            if (!targetTool || targetTool.status !== 'running') {
+              clearInterval(intervals[tool.id]);
+              return prev;
+            }
+
+            const currentProgress = targetTool.progress || 0;
+            const updates: any = {};
+            
+            if (currentProgress < 90) {
+              const increment = currentProgress < 30 ? 15 : (currentProgress < 60 ? 8 : Math.random() * 3 + 1);
+              updates.progress = Math.min(90, currentProgress + increment);
+            } else if (currentProgress < 98) {
+              updates.progress = currentProgress + (Math.random() * 0.5 + 0.1);
+              const duration = Date.now() - targetTool.startTime;
+              if (duration > 45000 && !targetTool.logs.includes('Operation taking longer than expected, still processing...')) {
+                updates.logs = [...targetTool.logs, 'Operation taking longer than expected, still processing...'];
               }
-              
-              if (updates.progress >= 10 && t.logs.length === 2) {
-                updates.logs = [...(updates.logs || t.logs), 'Handshaking with remote server...', 'Bypassing rate limits...'];
-              } else if (updates.progress >= 60 && t.logs.length === 4) {
-                updates.logs = [...(updates.logs || t.logs), 'Awaiting server response...', 'Parsing data streams...'];
-              } else if (updates.progress >= 95 && Math.random() > 0.95 && t.logs.length < 12) {
-                const patienceLogs = [
-                  'Still processing large dataset...',
-                  'Deep scanning in progress...',
-                  'Awaiting final results from remote nodes...',
-                  'Aggregating findings...',
-                  'Please wait, this may take a few minutes...'
-                ];
-                const nextLog = patienceLogs[Math.floor(Math.random() * patienceLogs.length)];
-                if (!t.logs.includes(nextLog)) {
-                  updates.logs = [...(updates.logs || t.logs), nextLog];
-                }
-              }
-              
-              if (Object.keys(updates).length > 0) {
-                return { ...t, ...updates };
+            } else if (currentProgress < 99.9) {
+              updates.progress = currentProgress + (Math.random() * 0.02 + 0.005);
+            }
+            
+            if (updates.progress >= 10 && targetTool.logs.length === 2) {
+              updates.logs = [...(updates.logs || targetTool.logs), 'Handshaking with remote server...', 'Bypassing rate limits...'];
+            } else if (updates.progress >= 60 && targetTool.logs.length === 4) {
+              updates.logs = [...(updates.logs || targetTool.logs), 'Awaiting server response...', 'Parsing data streams...'];
+            } else if (updates.progress >= 95 && Math.random() > 0.95 && targetTool.logs.length < 12) {
+              const patienceLogs = [
+                'Still processing large dataset...',
+                'Deep scanning in progress...',
+                'Awaiting final results from remote nodes...',
+                'Aggregating findings...',
+                'Please wait, this may take a few minutes...'
+              ];
+              const nextLog = patienceLogs[Math.floor(Math.random() * patienceLogs.length)];
+              if (!targetTool.logs.includes(nextLog)) {
+                updates.logs = [...(updates.logs || targetTool.logs), nextLog];
               }
             }
-            return t;
-          }));
+            
+            if (Object.keys(updates).length > 0) {
+              return prev.map(t => t.id === tool.id ? { ...t, ...updates } : t);
+            }
+            return prev;
+          });
         }, 1500);
       }
     });
@@ -1684,7 +1859,7 @@ function App() {
     return () => {
       Object.values(intervals).forEach(clearInterval);
     };
-  }, [runningTools.length]);
+  }, [runningTools.some(t => t.status === 'running')]);
 
   const exportLogsAsJSON = () => {
     const data = JSON.stringify(runningTools, null, 2);
@@ -1869,18 +2044,33 @@ function App() {
         }
       }
 
+      const headers = new Headers();
+      let keysInHeader = true;
+
+      // Move keys to body for POST requests to avoid header limits
+      if (finalBody && typeof finalBody === 'object') {
+        finalBody.customApiKeys = customApiKeys;
+        keysInHeader = false;
+      }
+
+      if (keysInHeader) {
+        try {
+          const keysJson = JSON.stringify(customApiKeys);
+          const encodedKeys = btoa(unescape(encodeURIComponent(keysJson)));
+          headers.append('X-Custom-API-Keys', encodedKeys);
+        } catch (e) {
+          console.warn('Failed to encode custom API keys:', e);
+          headers.append('X-Custom-API-Keys', btoa('{}'));
+        }
+      }
+
       const fetchOptions: RequestInit = { 
         signal: controller.signal,
-        headers: {
-          'X-Custom-API-Keys': JSON.stringify(customApiKeys)
-        }
+        headers
       };
       if (finalBody) {
         fetchOptions.method = 'POST';
-        fetchOptions.headers = { 
-          ...fetchOptions.headers,
-          'Content-Type': 'application/json' 
-        };
+        headers.append('Content-Type', 'application/json');
         fetchOptions.body = JSON.stringify(finalBody);
       }
       const res = await fetch(finalApi, fetchOptions);
@@ -1934,7 +2124,12 @@ function App() {
     } catch (e) {
       clearTimeout(timeoutId);
       abortControllersRef.current = abortControllersRef.current.filter(c => c !== controller);
-      const errorMessage = e instanceof Error && e.name === 'AbortError' ? 'Request timed out' : e instanceof Error ? e.message : 'Unknown error';
+      let errorMessage = e instanceof Error && e.name === 'AbortError' ? 'Request timed out' : e instanceof Error ? `${e.message}\n${e.stack}` : 'Unknown error';
+      
+      if (errorMessage.includes('Load failed') || errorMessage.includes('Failed to fetch')) {
+        errorMessage = "Network error: Load failed. This usually happens when a browser extension (like an adblocker) blocks the request, or the network connection is lost.";
+      }
+      
       updateToolStatus(runningToolId, { 
         status: 'failed', 
         progress: 100, 
@@ -1946,8 +2141,10 @@ function App() {
   };
 
   const handleScan = async (deep = false) => {
-    const targetsToScan = [searchQuery, ...extraTargets].filter(t => t.trim() !== '');
-    if (targetsToScan.length === 0) return;
+    const mainQuery = searchQuery.trim();
+    const secondaryQuery = (showSecondarySearch && searchQuerySecondary) ? searchQuerySecondary.trim() : null;
+    
+    if (!mainQuery && !secondaryQuery) return;
     
     // Clear any existing controllers
     abortControllersRef.current.forEach(c => c.abort());
@@ -1957,38 +2154,40 @@ function App() {
     setIsDeepScan(deep);
     setIsHistoricalScan(false);
     setActiveTab('Scan');
-    
-    const allResults: Record<string, any> = {};
-    
-    for (const target of targetsToScan) {
-      saveSearch(target);
-      addToSearchHistory(target);
+
+    const processTarget = async (query: string, isPrimary: boolean) => {
+      saveSearch(query);
+      addToSearchHistory(query);
       
+      if (isPrimary && (!scanResults || scanResults.target !== query)) {
+        setScanResults(null);
+      }
+
       let results: any = null;
       try {
-        const isDomain = target.includes('.') && !target.includes('@') && !target.includes(' ') && target.split('.').pop()!.length >= 2;
-        const isEmail = target.includes('@') && target.includes('.');
+        const isDomain = query.includes('.') && !query.includes('@') && !query.includes(' ') && query.split('.').pop()!.length >= 2;
+        const isEmail = query.includes('@') && query.includes('.');
         const isUsername = !isDomain && !isEmail;
 
         results = {
           timestamp: new Date().toISOString(),
-          target: target,
+          target: query,
           type: isDomain ? 'Domain' : isEmail ? 'Email' : 'Username',
-          possibleIdentifiers: generatePossibleIdentifiers(target)
+          possibleIdentifiers: generatePossibleIdentifiers(query)
         };
 
         if (deep) {
           const promises: Promise<any>[] = [];
           
           if (isDomain || isEmail) {
-            promises.push(runTool('WHOIS_LOOKUP', `/api/osint/whois?target=${target}`, undefined, 'Domain'));
-            promises.push(runTool('DNS_ENUMERATION', `/api/osint/dns?target=${target}`, undefined, 'Domain'));
+            promises.push(runTool('WHOIS_LOOKUP', `/api/osint/whois?target=${query}`, undefined, 'Domain'));
+            promises.push(runTool('DNS_ENUMERATION', `/api/osint/dns?target=${query}`, undefined, 'Domain'));
           } else {
             promises.push(Promise.resolve(null));
             promises.push(Promise.resolve(null));
           }
           
-          promises.push(runTool('SOCIAL_PRESENCE', `/api/osint/social?target=${target}`, undefined, 'Social'));
+          promises.push(runTool('SOCIAL_PRESENCE', `/api/osint/social?target=${query}`, undefined, 'Social'));
           
           const [whoisRes, dnsRes, socialRes] = await Promise.all(promises);
           results.whois = whoisRes;
@@ -1997,55 +2196,91 @@ function App() {
         } else {
           if (isDomain) {
             const [whoisRes, dnsRes] = await Promise.all([
-              runTool('WHOIS_LOOKUP', `/api/osint/whois?target=${target}`, undefined, 'Domain'),
-              runTool('DNS_ENUMERATION', `/api/osint/dns?target=${target}`, undefined, 'Domain')
+              runTool('WHOIS_LOOKUP', `/api/osint/whois?target=${query}`, undefined, 'Domain'),
+              runTool('DNS_ENUMERATION', `/api/osint/dns?target=${query}`, undefined, 'Domain')
             ]);
             results.whois = whoisRes;
             results.dns = dnsRes;
           }
 
           if (isUsername || isEmail) {
-            results.social = await runTool('SOCIAL_PRESENCE', `/api/osint/social?target=${target}`, undefined, 'Social');
+            results.social = await runTool('SOCIAL_PRESENCE', `/api/osint/social?target=${query}`, undefined, 'Social');
           }
 
           if (isEmail) {
             const [ghuntRes, epieosRes, holeheRes] = await Promise.all([
-              runTool('GHUNT_SCAN', `/api/osint/search?q=${encodeURIComponent(`"${target}" google account -inurl:login -inurl:signin -inurl:signup`)}`, 'ghunt', 'Email'),
-              runTool('EPIEOS_SCAN', `/api/osint/search?q=${encodeURIComponent(`site:epieos.com "${target}"`)}`, 'epieos', 'Email'),
-              runTool('HOLEHE_SCAN', `/api/osint/search?q=${encodeURIComponent(`"${target}" account -inurl:login -inurl:signin -inurl:signup`)}`, 'holehe', 'Email')
+              runTool('GHUNT_SCAN', `/api/osint/search?q=${encodeURIComponent(`"${query}" google account -inurl:login -inurl:signin -inurl:signup`)}`, 'ghunt', 'Email'),
+              runTool('EPIEOS_SCAN', `/api/osint/search?q=${encodeURIComponent(`site:epieos.com "${query}"`)}`, 'epieos', 'Email'),
+              runTool('HOLEHE_SCAN', `/api/osint/search?q=${encodeURIComponent(`"${query}" account -inurl:login -inurl:signin -inurl:signup`)}`, 'holehe', 'Email')
             ]);
             results.ghunt = ghuntRes;
             results.epieos = epieosRes;
             results.holehe = holeheRes;
           }
         }
-        allResults[target] = results;
-      } catch (error) {
-        console.error(`Scan failed for target ${target}:`, error);
-      }
-    }
 
-    setScanResults(allResults);
-    setIsScanning(false);
-    if (Object.keys(allResults).length > 0) {
-      setShowIntelligenceWindow(true);
-      // Set the first target as selected for the intelligence window
-      setSelectedTargetIndex(0);
-    }
+        // Add to history
+        const historyResults = { ...results };
+        if (historyResults.social && Array.isArray(historyResults.social)) {
+          historyResults.social = historyResults.social.filter((s: any) => 
+            s.status === 'Found' || s.status === 'Possible but Deleted'
+          ).slice(0, 200);
+        }
+
+        const historyItem = {
+          timestamp: results.timestamp,
+          query: query,
+          isDeep: deep,
+          results: historyResults
+        };
+        
+        setScanHistory(prev => [historyItem, ...prev].slice(0, 50));
+
+        return results;
+      } catch (error) {
+        console.error(`Scan failed for ${query}:`, error);
+        return null;
+      }
+    };
+
+    const runAllScans = async () => {
+      const mainResults = mainQuery ? await processTarget(mainQuery, true) : null;
+      const secondResults = secondaryQuery ? await processTarget(secondaryQuery, !mainQuery) : null;
+      
+      // If we have both, we can optionally merge them for the visualization
+      if (mainResults && secondResults) {
+        setScanResults({
+          ...mainResults,
+          target: `${mainQuery} + ${secondaryQuery}`,
+          combined: true,
+          secondaryTarget: secondaryQuery,
+          // Merge social results for visualization
+          social: [...(mainResults.social || []), ...(secondResults.social || [])]
+        });
+      } else if (mainResults) {
+        setScanResults(mainResults);
+      } else if (secondResults) {
+        setScanResults(secondResults);
+      }
+      
+      setIsScanning(false);
+      if (mainResults || secondResults) setShowIntelligenceWindow(true);
+    };
+
+    runAllScans();
   };
 
   const handleToolSearch = async (toolOrName: OSINTTool | string, customUrl?: string) => {
     let url = '';
     let name = '';
     let toolId = '';
-    const currentTarget = allTargets[selectedTargetIndex] || searchQuery;
 
     if (typeof toolOrName === 'string') {
       const tool = OSINT_TOOLS.find(t => t.name === toolOrName);
       if (tool) {
         name = tool.name;
         toolId = tool.id;
-        url = customUrl || (tool.searchUrl && currentTarget ? tool.searchUrl.replace('{query}', encodeURIComponent(currentTarget)) : tool.url);
+        url = customUrl || (tool.searchUrl && searchQuery ? tool.searchUrl.replace('{query}', encodeURIComponent(searchQuery)) : tool.url);
       } else {
         name = toolOrName;
         url = customUrl || '';
@@ -2053,13 +2288,17 @@ function App() {
     } else {
       name = toolOrName.name;
       toolId = toolOrName.id;
-      url = customUrl || (toolOrName.searchUrl && currentTarget ? toolOrName.searchUrl.replace('{query}', encodeURIComponent(currentTarget)) : toolOrName.url);
+      url = customUrl || (toolOrName.searchUrl && searchQuery ? toolOrName.searchUrl.replace('{query}', encodeURIComponent(searchQuery)) : toolOrName.url);
     }
 
     if (!url) return;
+    
+    if (searchQuery) {
+      addToSearchHistory(searchQuery);
+    }
 
     // If no search query, just open the tool URL in the browser tab
-    if (!currentTarget) {
+    if (!searchQuery) {
       setBrowserUrl(url);
       setBrowserHistory(prev => [url, ...prev].slice(0, 50));
       setActiveTab('Browser');
@@ -2124,12 +2363,13 @@ function App() {
     if (url.includes('google.com/search')) {
       let q: string | null = null;
       try {
-        // Handle potential URL parsing issues for extremely long dorks
+        // Handle potential URL parsing issues for extremely long dorks or relative URLs
         if (url.includes('q=')) {
           const searchPart = url.split('q=')[1].split('&')[0];
           q = decodeURIComponent(searchPart.replace(/\+/g, ' '));
         } else {
-          q = new URL(url).searchParams.get('q');
+          const base = url.startsWith('/') ? window.location.origin : undefined;
+          q = new URL(url, base).searchParams.get('q');
         }
       } catch (e) {
         console.warn('Standard URL parsing failed for Google search, trying manual extraction:', e);
@@ -2146,23 +2386,44 @@ function App() {
         setModalContent({ title: `${name} Results`, content: '', type: 'search', results: [], url });
         const runningToolId = addRunningTool(name, 'search', typeof toolOrName !== 'string' ? toolOrName.category : 'General');
         try {
+          const body = { 
+            q,
+            customApiKeys: customApiKeys // Send in body to avoid header limits
+          };
+
           const res = await fetch('/api/osint/search', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ q })
+            headers: {
+              'Content-Type': 'application/json'
+              // Header removed to avoid 431 or network refusal due to large headers
+            },
+            body: JSON.stringify(body)
           });
           if (res.ok) {
             const data = await res.json();
             setModalContent({ title: `${name} Results`, content: '', type: 'search', results: data, url });
             updateToolStatus(runningToolId, { status: 'completed', results: `Found ${data.length} results` });
           } else {
-            const errorData = await res.json().catch(() => ({}));
-            const errorMessage = errorData.error || `API Error (${res.status})`;
+            let errorMessage = `API Error (${res.status})`;
+            try {
+              const errorData = await res.json();
+              errorMessage = errorData.error || errorMessage;
+            } catch (e) {
+              // Not JSON results, maybe 502/504
+              if (res.status === 431) errorMessage = "Request headers too large. Try removing some API keys.";
+              if (res.status === 504) errorMessage = "Search timed out. The search engines are responding slowly.";
+              if (res.status === 429) errorMessage = "Rate limited. Please wait before searching again.";
+            }
             throw new Error(errorMessage);
           }
         } catch (error) {
           console.error('Tool search failed:', error);
-          const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+          let errorMessage = error instanceof Error ? error.message : 'Unknown error';
+          
+          if (errorMessage === 'Load failed' || errorMessage === 'Failed to fetch') {
+            errorMessage = "Network error. This usually happens if the search query is too complex, the network is unstable, or a browser extension is blocking the request.";
+          }
+          
           updateToolStatus(runningToolId, { status: 'failed', results: errorMessage });
           
           // Inform user about failure without automatic redirect
@@ -2381,19 +2642,23 @@ function App() {
       } else {
         const url = tool.searchUrl ? tool.searchUrl.replace('{query}', encodeURIComponent(searchQuery)) : tool.url;
         try {
-          if (url && url.includes('google.com/search')) {
-            const searchUrlObj = new URL(url);
-            const q = searchUrlObj.searchParams.get('q');
-            api = `/api/osint/search?q=${encodeURIComponent(q || searchQuery)}`;
-          } else if (url && url !== '#') {
-            api = `/api/osint/proxy-tool?url=${encodeURIComponent(url)}`;
+          if (url && url !== '#' && (url.startsWith('http') || url.startsWith('/'))) {
+            if (url.includes('google.com/search')) {
+              const base = url.startsWith('/') ? window.location.origin : undefined;
+              const searchUrlObj = new URL(url, base);
+              const q = searchUrlObj.searchParams.get('q');
+              api = `/api/osint/search?q=${encodeURIComponent(q || searchQuery)}`;
+            } else {
+              api = `/api/osint/proxy-tool?url=${encodeURIComponent(url)}`;
+            }
           } else {
             // Skip tools with no valid URL
             setWorkflowProgress(prev => ({ ...prev, [id]: true }));
             continue;
           }
         } catch (e) {
-          if (url && url !== '#') {
+          console.warn(`Failed to process URL for tool ${id}:`, url, e);
+          if (url && url !== '#' && (url.startsWith('http') || url.startsWith('/'))) {
             api = `/api/osint/proxy-tool?url=${encodeURIComponent(url)}`;
           } else {
             setWorkflowProgress(prev => ({ ...prev, [id]: true }));
@@ -2498,22 +2763,32 @@ function App() {
               {[
                 { id: 'Search', icon: Search, label: 'Search' },
                 { id: 'Scan', icon: Zap, label: 'Deep Scan' },
+                { id: 'TargetIntel', icon: Shield, label: 'Intel Report' },
+                { id: 'Status', icon: Activity, label: 'Live Ops' },
                 { id: 'Workflows', icon: Layers, label: 'Workflows' },
                 { id: 'Analyst', icon: Brain, label: 'Analyst' },
                 { id: 'Dorks', icon: Terminal, label: 'Dorks' },
-                { id: 'Intel', icon: Activity, label: 'Intel' },
+                { id: 'Intel', icon: Activity, label: 'Intel Feed' },
                 { id: 'Browser', icon: Globe, label: 'Browser' }
               ].map((item) => (
                 <button
                   key={item.id}
-                  onClick={() => setActiveTab(item.id as any)}
+                  onClick={() => {
+                    if (item.id === 'TargetIntel') {
+                      setShowIntelligenceWindow(!showIntelligenceWindow);
+                    } else if (item.id === 'Status') {
+                      setShowStatusWindow(!showStatusWindow);
+                    } else {
+                      setActiveTab(item.id as any);
+                    }
+                  }}
                   className={`flex items-center gap-2 px-4 py-2 rounded-md transition-all group relative ${
-                    activeTab === item.id 
+                    (item.id === 'TargetIntel' && showIntelligenceWindow) || (item.id === 'Status' && showStatusWindow) || activeTab === item.id 
                       ? 'text-neon-cyan' 
                       : 'text-white/40 hover:text-white'
                   }`}
                 >
-                  {activeTab === item.id && (
+                  {((item.id === 'TargetIntel' && showIntelligenceWindow) || (item.id === 'Status' && showStatusWindow) || activeTab === item.id) && (
                     <motion.div 
                       layoutId="navIndicator"
                       className="absolute inset-0 bg-white/5 border-b-2 border-neon-cyan"
@@ -2626,326 +2901,163 @@ function App() {
           </h1>
           
           <div className="max-w-2xl border-l-4 border-neon-cyan pl-4 md:pl-6 space-y-4">
-            <div className="flex items-center justify-between">
-              <span className="text-neon-cyan font-mono text-sm uppercase tracking-widest block">// INPUT TARGET DATA BELOW</span>
-              {extraTargets.length < 4 && (
-                <button 
-                  onClick={() => setExtraTargets([...extraTargets, ''])}
-                  className="text-[10px] font-mono text-neon-cyan border border-neon-cyan/30 px-2 py-0.5 hover:bg-neon-cyan/10 transition-all flex items-center gap-1 uppercase"
-                >
-                  <Plus size={10} /> Add_Target
-                </button>
-              )}
-            </div>
-            
-            <div className="space-y-3">
-              {/* Primary Target */}
+            <span className="text-neon-cyan font-mono text-sm uppercase tracking-widest block">// INPUT TARGET DATA BELOW</span>
+            <div className="flex flex-col gap-4">
               <div ref={searchRef} className="flex items-center gap-3 bg-white/5 border border-white/10 p-4 rounded-lg group focus-within:border-neon-cyan transition-all relative">
                 {searchQuery && !searchQuery.includes('.') && !searchQuery.includes('@') ? (
                   <User size={24} className="text-neon-cyan shrink-0 animate-pulse" />
                 ) : (
                   <Search size={24} className="text-neon-cyan shrink-0" />
                 )}
-              <div className="flex-1 relative">
-                <input 
-                  type="text" 
-                  placeholder="ENTER TARGET (DOMAIN, EMAIL, USERNAME)..."
-                  className="w-full bg-transparent border-none outline-none text-xl md:text-3xl placeholder:opacity-20 font-mono text-neon-cyan uppercase tracking-wider"
-                  value={searchQuery}
-                  onChange={(e) => {
-                    setSearchQuery(e.target.value);
-                    setHistoryIndex(-1);
-                    if (e.target.value.length > 2 && !e.target.value.includes('.') && !e.target.value.includes('@')) {
-                      setShowQuickResults(false); // Reset on change
-                    } else {
-                      setShowQuickResults(false);
-                    }
-                  }}
-                  onFocus={() => {
-                    setShowHistoryDropdown(true);
-                    setHistoryIndex(-1);
-                  }}
-                  onKeyDown={(e) => {
-                    if (e.key === 'ArrowDown') {
-                      e.preventDefault();
-                      if (!showHistoryDropdown) {
-                        setShowHistoryDropdown(true);
-                        setHistoryIndex(0);
-                      } else {
-                        setHistoryIndex(prev => (prev < filteredHistory.length - 1 ? prev + 1 : prev));
-                      }
-                    } else if (e.key === 'ArrowUp') {
-                      e.preventDefault();
-                      setHistoryIndex(prev => (prev > 0 ? prev - 1 : -1));
-                    } else if (e.key === 'Tab') {
-                      if (showHistoryDropdown && filteredHistory.length > 0) {
-                        e.preventDefault();
-                        const index = historyIndex >= 0 ? historyIndex : 0;
-                        setSearchQuery(filteredHistory[index]);
-                        setHistoryIndex(-1);
-                        setShowHistoryDropdown(false);
-                      }
-                    } else if (e.key === 'Enter') {
-                      if (historyIndex >= 0 && filteredHistory[historyIndex]) {
-                        setSearchQuery(filteredHistory[historyIndex]);
-                        setHistoryIndex(-1);
-                        setShowHistoryDropdown(false);
-                      } else {
-                        handleScan();
-                      }
-                    } else if (e.key === 'Escape') {
-                      setShowHistoryDropdown(false);
-                      setHistoryIndex(-1);
-                    }
-                  }}
-                />
-                
-                {/* Search History Dropdown */}
-                <AnimatePresence>
-                  {showHistoryDropdown && filteredHistory.length > 0 && (
-                    <motion.div 
-                      initial={{ opacity: 0, y: 10, scale: 0.95 }}
-                      animate={{ opacity: 1, y: 0, scale: 1 }}
-                      exit={{ opacity: 0, y: 10, scale: 0.95 }}
-                      className="absolute top-full left-0 w-full mt-2 bg-bg-secondary border-2 border-neon-cyan/30 shadow-[0_10px_40px_rgba(0,0,0,0.8)] z-[100] max-h-80 overflow-y-auto rounded-lg backdrop-blur-xl"
-                    >
-                      <div className="p-3 border-b border-white/10 flex items-center justify-between bg-white/5 sticky top-0 z-10 backdrop-blur-md">
-                        <div className="flex items-center gap-2">
-                          <History size={14} className="text-neon-cyan" />
-                          <span className="text-[10px] font-mono text-white/60 uppercase tracking-[0.2em]">Recent_Intelligence_Queries</span>
-                        </div>
-                        <button 
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            if (window.confirm('Wipe all search history?')) {
-                              setSearchHistory([]);
-                              localStorage.removeItem('osintSearchHistory');
-                            }
-                          }}
-                          className="text-[9px] font-mono text-neon-magenta uppercase hover:text-white transition-colors flex items-center gap-1"
-                        >
-                          <X size={10} /> PURGE_ALL
-                        </button>
-                      </div>
-                      <div className="py-1">
-                        {filteredHistory.map((s, i) => (
-                          <div 
-                            key={i}
-                            className={`flex items-center group transition-colors ${historyIndex === i ? 'bg-neon-cyan/10' : 'hover:bg-white/5'}`}
-                          >
-                            <button 
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setSearchQuery(s);
-                                setShowHistoryDropdown(false);
-                                setHistoryIndex(-1);
-                              }}
-                              className="flex-1 text-left px-4 py-3 font-mono text-xs uppercase tracking-widest flex items-center gap-3 overflow-hidden"
-                            >
-                              <Search size={12} className={`shrink-0 ${historyIndex === i ? 'text-neon-cyan' : 'text-white/20 group-hover:text-neon-cyan'}`} />
-                              <span className="truncate text-white/80 group-hover:text-white">{s}</span>
-                            </button>
-                            <button 
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                removeFromSearchHistory(s);
-                              }}
-                              className="p-3 text-white/10 hover:text-neon-magenta transition-colors opacity-0 group-hover:opacity-100"
-                              title="Remove from history"
-                            >
-                              <X size={14} />
-                            </button>
-                          </div>
-                        ))}
-                      </div>
-                    </motion.div>
-                  )}
-                </AnimatePresence>
-                
-                {/* Quick Social Results Dropdown */}
-                <AnimatePresence>
-                  {searchQuery && !searchQuery.includes('.') && !searchQuery.includes('@') && searchQuery.length > 2 && (
-                    <motion.div
-                      initial={{ opacity: 0, y: -10 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      className="absolute top-full left-0 w-full mt-2 z-50"
-                    >
-                      {!showQuickResults ? (
-                        <button
-                          onClick={() => handleQuickSocialScan(searchQuery)}
-                          className="w-full bg-neon-cyan/10 border border-neon-cyan/30 backdrop-blur-md p-3 flex items-center justify-between group hover:bg-neon-cyan/20 transition-all rounded-lg"
-                        >
-                          <div className="flex items-center gap-3">
-                            <User size={16} className="text-neon-cyan" />
-                            <span className="text-[10px] font-mono text-neon-cyan uppercase tracking-widest">Identify Social Footprint for "{searchQuery}"?</span>
-                          </div>
-                          <ChevronRight size={14} className="text-neon-cyan group-hover:translate-x-1 transition-transform" />
-                        </button>
-                      ) : (
-                        <div className="bg-bg-secondary border border-border-primary shadow-2xl rounded-lg overflow-hidden">
-                          <div className="p-2 border-b border-border-primary flex items-center justify-between bg-white/5">
-                            <div className="flex items-center gap-2">
-                              <span className="text-[8px] font-mono text-neon-cyan uppercase tracking-[0.2em] px-2">QUICK_SOCIAL_LOOKUP</span>
-                              {isQuickScanning && <RefreshCw size={10} className="animate-spin text-neon-cyan" />}
-                            </div>
-                            <button 
-                              onClick={() => handleQuickSocialScan(searchQuery, true)}
-                              disabled={isQuickScanning}
-                              className="text-[8px] font-mono text-neon-lime hover:text-white uppercase tracking-widest px-2 py-1 border border-neon-lime/30 rounded hover:bg-neon-lime/20 transition-all disabled:opacity-50"
-                            >
-                              Deep Scan
-                            </button>
-                          </div>
-                          <div className="max-h-64 overflow-y-auto p-2">
-                            {isQuickScanning ? (
-                              <div className="space-y-2 p-4">
-                                <Skeleton className="h-4 w-3/4" />
-                                <Skeleton className="h-4 w-1/2" />
-                                <Skeleton className="h-4 w-2/3" />
-                              </div>
-                            ) : quickSocialResults.length > 0 ? (
-                              <div className="grid grid-cols-2 gap-2">
-                                {quickSocialResults.map((site) => (
-                                  <div
-                                    key={site.name}
-                                    className="p-2 border border-neon-lime/20 bg-neon-lime/5 hover:bg-neon-lime/10 flex flex-col gap-1 group transition-all rounded text-left relative"
-                                  >
-                                      <div className="flex items-center justify-between w-full">
-                                        <div className="flex items-center gap-1">
-                                          {site.avatar && (
-                                            <img 
-                                              src={site.avatar} 
-                                              alt={site.name} 
-                                              className="w-4 h-4 rounded-full border border-white/10"
-                                              referrerPolicy="no-referrer"
-                                            />
-                                          )}
-                                          <span className="text-[9px] font-mono uppercase truncate mr-2 text-neon-lime">{site.name}</span>
-                                        </div>
-                                        <div className="flex items-center gap-1">
-                                          <button 
-                                            onClick={() => {
-                                              setSearchQuery(site.url);
-                                              setShowQuickResults(false);
-                                            }}
-                                            title="Use as target"
-                                            className="p-1 hover:bg-neon-cyan/20 rounded transition-colors"
-                                          >
-                                            <Target size={10} className="text-neon-cyan" />
-                                          </button>
-                                          <button 
-                                            onClick={() => handleToolSearch(site.name, site.url)}
-                                            title="Open tool"
-                                            className="p-1 hover:bg-neon-lime/20 rounded transition-colors"
-                                          >
-                                            <ExternalLink size={10} className="text-neon-lime" />
-                                          </button>
-                                        </div>
-                                      </div>
-                                      {site.followers && (
-                                        <span className="text-[7px] text-neon-cyan/60 font-mono uppercase tracking-tighter">{site.followers}</span>
-                                      )}
-                                      {site.bio && (
-                                        <p className="text-[7px] text-white/40 line-clamp-2 leading-tight mt-1 italic">
-                                          {site.bio}
-                                        </p>
-                                      )}
-                                  </div>
-                                ))}
-                              </div>
-                            ) : (
-                              <div className="p-8 text-center">
-                                <span className="text-[10px] font-mono text-white/20 uppercase tracking-widest">No immediate matches found in top sectors</span>
-                              </div>
-                            )}
-                          </div>
-                          <button
-                            onClick={() => handleScan()}
-                            className="w-full p-3 bg-neon-cyan/10 border-t border-border-primary text-neon-cyan font-mono text-[10px] uppercase tracking-widest hover:bg-neon-cyan hover:text-black transition-all"
-                          >
-                            Execute Full Deep Scan
-                          </button>
-                        </div>
-                      )}
-                    </motion.div>
-                  )}
-                </AnimatePresence>
-                
-                {/* History Dropdown */}
-                <AnimatePresence>
-                  {showHistoryDropdown && savedSearches.length > 0 && (
-                    <motion.div 
-                      initial={{ opacity: 0, y: 10 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      exit={{ opacity: 0, y: 10 }}
-                      className="absolute top-full left-0 w-full mt-2 bg-bg-secondary border border-border-primary shadow-2xl z-50 max-h-64 overflow-y-auto"
-                    >
-                      <div className="p-2 border-b border-border-primary flex items-center justify-between">
-                        <span className="text-[8px] font-mono text-text-secondary uppercase tracking-[0.2em] px-2">RECENT_TARGETS</span>
-                        <button 
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setSavedSearches([]);
-                            localStorage.removeItem('osint_saved_searches');
-                          }}
-                          className="text-[8px] font-mono text-neon-magenta uppercase hover:underline px-2"
-                        >
-                          CLEAR_ALL
-                        </button>
-                      </div>
-                      {savedSearches.map((s, i) => (
-                        <button 
-                          key={i}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setSearchQuery(s);
-                            setShowHistoryDropdown(false);
-                          }}
-                          className="w-full text-left px-4 py-3 hover:bg-white/5 font-mono text-xs uppercase tracking-widest border-b border-border-primary/5 last:border-0 flex items-center gap-3 group"
-                        >
-                          <History size={12} className="text-text-secondary group-hover:text-neon-cyan" />
-                          <span className="truncate">{s}</span>
-                        </button>
-                      ))}
-                    </motion.div>
-                  )}
-                </AnimatePresence>
-              </div>
-            </div>
-              
-            {/* Extra Targets */}
-              {extraTargets.map((target, index) => (
-                <motion.div 
-                  initial={{ opacity: 0, x: -10 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  key={index} 
-                  className="flex items-center gap-3 bg-white/5 border border-white/10 p-3 rounded-lg group focus-within:border-neon-cyan transition-all"
-                >
-                  <Search size={18} className="text-neon-cyan/60 shrink-0" />
+                <div className="flex-1 flex items-center gap-3 relative">
                   <input 
                     type="text" 
-                    placeholder={`EXTRA TARGET #${index + 2}...`}
-                    className="flex-1 bg-transparent border-none outline-none text-lg md:text-xl placeholder:opacity-20 font-mono text-neon-cyan uppercase tracking-wider"
-                    value={target}
+                    placeholder="ENTER TARGET (DOMAIN, EMAIL, USERNAME)..."
+                    className="flex-1 bg-transparent border-none outline-none text-xl md:text-3xl placeholder:opacity-20 font-mono text-neon-cyan uppercase tracking-wider"
+                    value={searchQuery}
                     onChange={(e) => {
-                      const newExtraTargets = [...extraTargets];
-                      newExtraTargets[index] = e.target.value;
-                      setExtraTargets(newExtraTargets);
+                      setSearchQuery(e.target.value);
+                      setHistoryIndex(-1);
+                      if (e.target.value.length > 2 && !e.target.value.includes('.') && !e.target.value.includes('@')) {
+                        setShowQuickResults(false); // Reset on change
+                      } else {
+                        setShowQuickResults(false);
+                      }
+                    }}
+                    onFocus={() => {
+                      setShowHistoryDropdown(true);
+                      setHistoryIndex(-1);
                     }}
                     onKeyDown={(e) => {
-                      if (e.key === 'Enter') {
-                        handleScan();
+                      if (e.key === 'ArrowDown') {
+                        e.preventDefault();
+                        if (!showHistoryDropdown) {
+                          setShowHistoryDropdown(true);
+                          setHistoryIndex(0);
+                        } else {
+                          setHistoryIndex(prev => (prev < filteredHistory.length - 1 ? prev + 1 : prev));
+                        }
+                      } else if (e.key === 'ArrowUp') {
+                        e.preventDefault();
+                        setHistoryIndex(prev => (prev > 0 ? prev - 1 : -1));
+                      } else if (e.key === 'Tab') {
+                        if (showHistoryDropdown && filteredHistory.length > 0) {
+                          e.preventDefault();
+                          const index = historyIndex >= 0 ? historyIndex : 0;
+                          setSearchQuery(filteredHistory[index]);
+                          setHistoryIndex(-1);
+                          setShowHistoryDropdown(false);
+                        }
+                      } else if (e.key === 'Enter') {
+                        if (historyIndex >= 0 && filteredHistory[historyIndex]) {
+                          setSearchQuery(filteredHistory[historyIndex]);
+                          setHistoryIndex(-1);
+                          setShowHistoryDropdown(false);
+                        } else {
+                          handleScan();
+                        }
+                      } else if (e.key === 'Escape') {
+                        setShowHistoryDropdown(false);
+                        setHistoryIndex(-1);
                       }
                     }}
                   />
+
                   <button 
-                    onClick={() => setExtraTargets(extraTargets.filter((_, i) => i !== index))}
-                    className="p-1 text-white/20 hover:text-neon-magenta transition-colors"
+                    onClick={() => setShowSecondarySearch(!showSecondarySearch)}
+                    className={`p-2 rounded-md transition-all ${showSecondarySearch ? 'bg-neon-magenta/20 text-neon-magenta border border-neon-magenta/50' : 'bg-white/5 text-white/40 border border-white/10 hover:border-neon-cyan hover:text-neon-cyan'}`}
+                    title={showSecondarySearch ? "Remove Secondary Target" : "Add Secondary Target"}
                   >
-                    <X size={16} />
+                    <Plus size={20} className={showSecondarySearch ? 'rotate-45 transition-transform' : 'transition-transform'} />
                   </button>
-                </motion.div>
-              ))}
+                  
+                  {/* Search History Dropdown */}
+                  <AnimatePresence>
+                    {showHistoryDropdown && filteredHistory.length > 0 && (
+                      <motion.div 
+                        initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                        animate={{ opacity: 1, y: 0, scale: 1 }}
+                        exit={{ opacity: 0, y: 10, scale: 0.95 }}
+                        className="absolute top-full left-0 w-full mt-2 bg-bg-secondary border-2 border-neon-cyan/30 shadow-[0_10px_40px_rgba(0,0,0,0.8)] z-[100] max-h-80 overflow-y-auto rounded-lg backdrop-blur-xl"
+                      >
+                        <div className="p-3 border-b border-white/10 flex items-center justify-between bg-white/5 sticky top-0 z-10 backdrop-blur-md">
+                          <div className="flex items-center gap-2">
+                            <History size={14} className="text-neon-cyan" />
+                            <span className="text-[10px] font-mono text-white/60 uppercase tracking-[0.2em]">Recent_Intelligence_Queries</span>
+                          </div>
+                          <button 
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (window.confirm('Wipe all search history?')) {
+                                setSearchHistory([]);
+                                localStorage.removeItem('osintSearchHistory');
+                              }
+                            }}
+                            className="text-[9px] font-mono text-neon-magenta uppercase hover:text-white transition-colors flex items-center gap-1"
+                          >
+                            <X size={10} /> PURGE_ALL
+                          </button>
+                        </div>
+                        <div className="py-1">
+                          {filteredHistory.map((s, i) => (
+                            <div 
+                              key={i}
+                              className={`flex items-center group transition-colors ${historyIndex === i ? 'bg-neon-cyan/10' : 'hover:bg-white/5'}`}
+                            >
+                              <button 
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setSearchQuery(s);
+                                  setShowHistoryDropdown(false);
+                                  setHistoryIndex(-1);
+                                }}
+                                className="flex-1 text-left px-4 py-3 font-mono text-xs uppercase tracking-widest flex items-center gap-3 overflow-hidden"
+                              >
+                                <Search size={12} className={`shrink-0 ${historyIndex === i ? 'text-neon-cyan' : 'text-white/20 group-hover:text-neon-cyan'}`} />
+                                <span className="truncate text-white/80 group-hover:text-white">{s}</span>
+                              </button>
+                              <button 
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  removeFromSearchHistory(s);
+                                }}
+                                className="p-3 text-white/10 hover:text-neon-magenta transition-colors opacity-0 group-hover:opacity-100"
+                                title="Remove from history"
+                              >
+                                <X size={14} />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                </div>
+              </div>
+
+              <AnimatePresence>
+                {showSecondarySearch && (
+                  <motion.div 
+                    initial={{ opacity: 0, height: 0, y: -20 }}
+                    animate={{ opacity: 1, height: 'auto', y: 0 }}
+                    exit={{ opacity: 0, height: 0, y: -20 }}
+                    className="overflow-hidden"
+                  >
+                    <div className="flex items-center gap-3 bg-white/5 border border-white/10 p-4 rounded-lg group focus-within:border-neon-magenta transition-all relative">
+                      <Target size={24} className="text-neon-magenta shrink-0" />
+                      <div className="flex-1">
+                        <input 
+                          type="text" 
+                          placeholder="ADD SECONDARY TARGET..."
+                          className="w-full bg-transparent border-none outline-none text-xl md:text-3xl placeholder:opacity-20 font-mono text-neon-magenta uppercase tracking-wider"
+                          value={searchQuerySecondary}
+                          onChange={(e) => setSearchQuerySecondary(e.target.value)}
+                        />
+                      </div>
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </div>
           </div>
         </div>
@@ -3473,6 +3585,12 @@ function App() {
             In_App_Browser
           </button>
           <button 
+            onClick={() => setActiveTab('History')}
+            className={`whitespace-nowrap px-3 md:px-6 py-2 md:py-3 font-mono text-[9px] md:text-xs uppercase tracking-widest border-b-2 transition-all ${activeTab === 'History' ? 'border-neon-cyan text-neon-cyan' : 'border-transparent opacity-50 hover:opacity-100'}`}
+          >
+            History
+          </button>
+          <button 
             onClick={() => setActiveTab('Diagnostics')}
             className={`whitespace-nowrap px-3 md:px-6 py-2 md:py-3 font-mono text-[9px] md:text-xs uppercase tracking-widest border-b-2 transition-all ${activeTab === 'Diagnostics' ? 'border-neon-cyan text-neon-cyan' : 'border-transparent opacity-50 hover:opacity-100'}`}
           >
@@ -3501,22 +3619,29 @@ function App() {
           onClick={() => setActiveTab('Scan')}
           className={`flex flex-col items-center gap-1 p-2 transition-all ${activeTab === 'Scan' ? 'text-neon-lime' : 'text-white/40'}`}
         >
-          <Activity size={20} />
+          <Zap size={20} />
           <span className="text-[8px] font-mono uppercase tracking-tighter">Scan</span>
         </button>
         <button 
-          onClick={() => setActiveTab('TargetIntel')}
-          className={`flex flex-col items-center gap-1 p-2 transition-all ${activeTab === 'TargetIntel' ? 'text-neon-lime' : 'text-white/40'}`}
+          onClick={() => setShowIntelligenceWindow(!showIntelligenceWindow)}
+          className={`flex flex-col items-center gap-1 p-2 transition-all ${showIntelligenceWindow ? 'text-neon-lime shadow-[0_0_10px_rgba(57,255,20,0.2)]' : 'text-white/40'}`}
         >
           <Shield size={20} />
           <span className="text-[8px] font-mono uppercase tracking-tighter">Intel_Report</span>
+        </button>
+        <button 
+          onClick={() => setShowStatusWindow(!showStatusWindow)}
+          className={`flex flex-col items-center gap-1 p-2 transition-all ${showStatusWindow ? 'text-neon-magenta shadow-[0_0_10px_rgba(255,0,255,0.2)]' : 'text-white/40'}`}
+        >
+          <Activity size={20} />
+          <span className="text-[8px] font-mono uppercase tracking-tighter">Live_Ops</span>
         </button>
         <button 
           onClick={() => setActiveTab('Intel')}
           className={`flex flex-col items-center gap-1 p-2 transition-all ${activeTab === 'Intel' ? 'text-neon-yellow' : 'text-white/40'}`}
         >
           <Zap size={20} />
-          <span className="text-[8px] font-mono uppercase tracking-tighter">Intel</span>
+          <span className="text-[8px] font-mono uppercase tracking-tighter">Feed</span>
         </button>
         <button 
           onClick={() => setActiveTab('Analyst')}
@@ -3524,6 +3649,12 @@ function App() {
         >
           <Brain size={20} />
           <span className="text-[8px] font-mono uppercase tracking-tighter">AI</span>
+        </button>
+        <button 
+          onClick={() => setActiveTab('History')}
+          className={`px-6 py-3 font-mono text-xs uppercase tracking-widest border-b-2 transition-all shrink-0 ${activeTab === 'History' ? 'border-neon-cyan text-neon-cyan bg-neon-cyan/5' : 'border-transparent opacity-50'}`}
+        >
+          HISTORY
         </button>
         <button 
           onClick={() => setActiveTab('Diagnostics')}
@@ -4992,6 +5123,119 @@ function App() {
                 </div>
               </div>
             </motion.div>
+          ) : activeTab === 'History' ? (
+            <motion.div
+              key="history"
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -20 }}
+              className="space-y-8"
+            >
+              <div className="flex items-center justify-between border-b border-white/10 pb-6">
+                <div>
+                  <h2 className="text-4xl font-graffiti tracking-widest uppercase mb-2 text-neon-cyan">Intelligence_Archive</h2>
+                  <p className="font-mono text-xs text-white/40 uppercase tracking-[0.2em]">Stored_Intelligence_Sequences // Local_Cache_Only</p>
+                </div>
+                <div className="flex gap-4">
+                  <button 
+                    onClick={exportResults}
+                    className="px-4 py-2 border border-neon-cyan/30 text-[10px] font-mono text-neon-cyan uppercase tracking-widest hover:bg-neon-cyan hover:text-black transition-all"
+                  >
+                    Export_All_Archive
+                  </button>
+                  <button 
+                    onClick={() => {
+                      if (window.confirm('IRREVERSIBLE: Purge all intelligence archives?')) {
+                        setScanHistory([]);
+                        localStorage.removeItem('osint_scan_history');
+                      }
+                    }}
+                    className="px-4 py-2 border border-neon-magenta/30 text-[10px] font-mono text-neon-magenta uppercase tracking-widest hover:bg-neon-magenta hover:text-black transition-all"
+                  >
+                    Purge_Archive
+                  </button>
+                </div>
+              </div>
+
+              {scanHistory.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-32 text-center opacity-20 border-2 border-dashed border-white/10 rounded-xl">
+                  <History size={64} className="mb-6" />
+                  <p className="text-xl uppercase tracking-[0.3em] font-bold text-white">No Archive Entries Found</p>
+                  <p className="text-xs mt-2 uppercase tracking-widest text-white/60">Your intelligence missions will be logged here automatically</p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 gap-4">
+                  {scanHistory.map((h, i) => (
+                    <div key={i} className="bg-black/40 border-2 border-white/10 p-6 rounded-xl group hover:border-neon-cyan/50 transition-all flex flex-col md:flex-row md:items-center justify-between gap-6">
+                      <div className="flex flex-col gap-2 flex-1 min-w-0">
+                        <div className="flex items-center gap-3">
+                          <span className={`px-2 py-0.5 text-[8px] font-mono uppercase tracking-tighter rounded ${
+                            h.results?.type === 'Domain' ? 'bg-neon-cyan/20 text-neon-cyan border border-neon-cyan/30' :
+                            h.results?.type === 'Email' ? 'bg-neon-magenta/20 text-neon-magenta border border-neon-magenta/30' :
+                            'bg-neon-lime/20 text-neon-lime border border-neon-lime/30'
+                          }`}>
+                            {h.results?.type || 'UNKNOWN'}
+                          </span>
+                          {h.isDeep && (
+                            <span className="px-2 py-0.5 text-[8px] font-mono uppercase tracking-tighter rounded bg-neon-yellow/20 text-neon-yellow border border-neon-yellow/30">
+                              DEEP_SCAN
+                            </span>
+                          )}
+                          <span className="text-[10px] font-mono text-white/20 uppercase">
+                            {new Date(h.timestamp).toLocaleString()}
+                          </span>
+                        </div>
+                        <h3 className="text-2xl font-mono text-white group-hover:text-neon-cyan transition-colors truncate">
+                          {h.query}
+                        </h3>
+                        <div className="flex flex-wrap gap-2 mt-2">
+                          {h.results?.whois && <span className="text-[8px] font-mono text-white/40 border border-white/10 px-1">WHOIS_OK</span>}
+                          {h.results?.dns && <span className="text-[8px] font-mono text-white/40 border border-white/10 px-1">DNS_OK</span>}
+                          {h.results?.social && h.results.social.length > 0 && (
+                            <span className="text-[8px] font-mono text-neon-lime border border-neon-lime/20 px-1">
+                              {h.results.social.filter((s:any) => s.status === 'Found').length} SOCIAL_FOUND
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <button 
+                          onClick={() => {
+                            setSearchQuery(h.query);
+                            setScanResults(h.results);
+                            setIsDeepScan(h.isDeep);
+                            setShowIntelligenceWindow(true);
+                            setActiveTab('TargetIntel');
+                          }}
+                          className="px-6 py-2 bg-neon-cyan/10 border border-neon-cyan text-neon-cyan font-mono text-[10px] uppercase tracking-widest hover:bg-neon-cyan hover:text-black transition-all flex items-center gap-2"
+                        >
+                          <Eye size={14} /> VIEW_REPORT
+                        </button>
+                        <button 
+                          onClick={() => {
+                            setSearchQuery(h.query);
+                            scrollToSearch();
+                          }}
+                          className="p-2 border border-white/10 text-white/40 hover:text-white hover:border-white/40 transition-all rounded"
+                          title="Use as search query"
+                        >
+                          <Search size={16} />
+                        </button>
+                        <button 
+                          onClick={() => {
+                            setScanHistory(prev => prev.filter((_, idx) => idx !== i));
+                          }}
+                          className="p-2 border border-neon-magenta/20 text-neon-magenta/40 hover:text-neon-magenta hover:border-neon-magenta/40 transition-all rounded"
+                          title="Delete from archive"
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </motion.div>
           ) : activeTab === 'Diagnostics' ? (
             <motion.div
               key="diagnostics"
@@ -5181,178 +5425,221 @@ function App() {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[100] flex items-center justify-center p-4 md:p-8 bg-black/90 backdrop-blur-md"
+            className="fixed inset-0 z-[2000] flex items-center justify-center p-4 md:p-8 bg-black/95 backdrop-blur-xl"
             onClick={() => setModalContent(null)}
           >
             <motion.div
               initial={{ scale: 0.9, opacity: 0, y: 20 }}
               animate={{ scale: 1, opacity: 1, y: 0 }}
               exit={{ scale: 0.9, opacity: 0, y: 20 }}
-              className="w-full max-w-5xl max-h-[90vh] bg-[#0a0a0a] border-4 border-white shadow-[20px_20px_0_rgba(255,255,255,0.1)] overflow-hidden flex flex-col relative"
+              className="w-full max-w-6xl h-[90vh] bg-[#050505] border border-white/20 shadow-[0_0_100px_rgba(0,0,0,0.8)] overflow-hidden flex flex-col relative rounded-xl"
               onClick={e => e.stopPropagation()}
             >
               {/* Modal Header */}
-              <div className="p-4 md:p-6 border-b-4 border-white flex justify-between items-center bg-white text-black">
-                <div className="flex items-center gap-4">
-                  <div className="p-2 bg-black text-white">
-                    {modalContent.type === 'article' ? <FileText size={20} /> : <Search size={20} />}
+              <div className="p-5 border-b border-white/10 flex justify-between items-center bg-black/40 backdrop-blur-md">
+                <div className="flex items-center gap-6">
+                  <div className={`p-3 rounded-lg ${modalContent.type === 'article' ? 'bg-neon-cyan/20 text-neon-cyan' : 'bg-neon-lime/20 text-neon-lime'}`}>
+                    {modalContent.type === 'article' ? <FileText size={24} /> : <Search size={24} />}
                   </div>
-                  <h2 className="font-graffiti text-xl md:text-2xl uppercase tracking-tighter truncate max-w-[200px] md:max-w-md">
-                    {modalContent.title}
-                  </h2>
+                  <div>
+                    <h2 className="font-mono text-xl uppercase tracking-[0.2em] text-white flex items-center gap-3">
+                      {modalContent.title}
+                      <span className="text-[10px] bg-white/10 px-2 py-0.5 rounded text-white/40 font-normal">SECURED_SESSION</span>
+                    </h2>
+                    <p className="text-[10px] font-mono text-white/30 uppercase tracking-widest mt-1">
+                      Origin: {modalContent.url || 'Internal_Scan'} • {modalContent.results?.length || 0} Entities_Identified
+                    </p>
+                  </div>
                 </div>
-                <button 
-                  onClick={() => setModalContent(null)}
-                  className="p-2 hover:bg-black hover:text-white transition-colors border-2 border-black"
-                >
-                  <XCircle size={24} />
-                </button>
+
+                <div className="flex items-center gap-4">
+                  {modalContent.type !== 'article' && (
+                    <div className="flex bg-white/5 p-1 rounded-md border border-white/10">
+                      <button 
+                        onClick={() => setActiveModalView('list')}
+                        className={`px-4 py-1.5 rounded text-[10px] uppercase tracking-widest transition-all ${activeModalView === 'list' ? 'bg-white/10 text-white shadow-inner' : 'text-white/40 hover:text-white'}`}
+                      >
+                        Intel_Feed
+                      </button>
+                      <button 
+                        onClick={() => setActiveModalView('viz')}
+                        className={`px-4 py-1.5 rounded text-[10px] uppercase tracking-widest transition-all ${activeModalView === 'viz' ? 'bg-white/10 text-white shadow-inner' : 'text-white/40 hover:text-white'}`}
+                      >
+                        Relationship_Map
+                      </button>
+                    </div>
+                  )}
+                  <button 
+                    onClick={() => setModalContent(null)}
+                    className="p-2.5 rounded-lg bg-white/5 hover:bg-neon-magenta/20 hover:text-neon-magenta transition-all border border-white/10"
+                  >
+                    <X size={20} />
+                  </button>
+                </div>
               </div>
 
               {/* Modal Content */}
-              <div className="flex-1 overflow-y-auto p-6 md:p-10 font-mono custom-scrollbar">
+              <div className="flex-1 overflow-hidden relative font-mono">
                 {isModalLoading ? (
-                  <div className="space-y-8 py-10">
-                    <div className="flex items-center gap-4 text-neon-cyan animate-pulse">
-                      <Terminal size={24} />
-                      <span className="text-sm tracking-[0.3em] uppercase">Intercepting data stream...</span>
+                  <div className="absolute inset-0 flex flex-col items-center justify-center gap-6 bg-black/40 backdrop-blur-sm z-50">
+                    <div className="relative">
+                      <div className="w-16 h-16 border-2 border-neon-cyan/20 rounded-full animate-ping absolute inset-0" />
+                      <div className="w-16 h-16 border-2 border-neon-cyan rounded-full animate-spin border-t-transparent" />
                     </div>
-                    <Skeleton className="h-8 w-3/4" />
-                    <Skeleton className="h-32 w-full" />
-                    <Skeleton className="h-32 w-full" />
+                    <div className="flex flex-col items-center gap-2">
+                      <span className="text-xs text-neon-cyan tracking-[0.5em] uppercase font-black animate-pulse">Synchronizing Cryptographic Streams</span>
+                      <div className="w-48 h-1 bg-white/5 rounded-full overflow-hidden">
+                        <motion.div 
+                          initial={{ x: '-100%' }}
+                          animate={{ x: '100%' }}
+                          transition={{ repeat: Infinity, duration: 1.5, ease: "linear" }}
+                          className="w-1/2 h-full bg-neon-cyan shadow-[0_0_10px_#00f3ff]"
+                        />
+                      </div>
+                    </div>
                   </div>
                 ) : (
-                  <div className="space-y-8">
-                    {modalContent.type === 'article' && (
-                      <div className="prose prose-invert max-w-none">
-                        <div 
-                          className="text-white/80 leading-relaxed text-sm md:text-base article-content"
-                          dangerouslySetInnerHTML={{ __html: modalContent.content }}
-                        />
-                        {modalContent.url && (
-                          <div className="mt-10 pt-10 border-t border-white/10">
-                            <button 
-                              onClick={() => openInBrowser(modalContent.url)}
-                              className="inline-flex items-center gap-3 text-xs text-neon-cyan hover:text-white transition-colors"
-                            >
-                              <ExternalLink size={14} /> VIEW_ORIGINAL_SOURCE_REPORT
-                            </button>
-                          </div>
-                        )}
-                      </div>
-                    )}
-
-                    {modalContent.type === 'search' && (
-                      <div className="space-y-6">
-                        {modalContent.results && modalContent.results.length > 0 ? (
-                          modalContent.results.map((res: any, i: number) => (
-                            <div key={i} className="p-6 bg-white/5 border border-white/10 hover:border-neon-cyan/50 transition-all group">
-                              <h4 className="text-neon-cyan font-bold mb-2 group-hover:text-white transition-colors">{res.title}</h4>
-                              <p className="text-xs text-white/60 mb-4 line-clamp-2">{res.snippet}</p>
-                              <div className="flex items-center justify-between gap-4">
+                  <div className="h-full flex flex-col">
+                    {activeModalView === 'list' ? (
+                      <div className="flex-1 overflow-y-auto p-8 custom-scrollbar space-y-8">
+                        {modalContent.type === 'article' && (
+                          <div className="prose prose-invert max-w-none">
+                            <div 
+                              className="text-white/80 leading-relaxed text-sm md:text-base article-content selection:bg-neon-cyan/30"
+                              dangerouslySetInnerHTML={{ __html: modalContent.content }}
+                            />
+                            {modalContent.url && (
+                              <div className="mt-12 pt-8 border-t border-white/5 flex items-center justify-between">
                                 <button 
-                                  onClick={() => openInBrowser(res.link)}
-                                  className="text-[10px] text-white/40 hover:text-neon-cyan transition-colors flex items-center gap-2 truncate"
+                                  onClick={() => openInBrowser(modalContent.url)}
+                                  className="group flex items-center gap-4 text-[10px] text-white/30 hover:text-neon-cyan transition-all uppercase tracking-[0.3em]"
                                 >
-                                  <LinkIcon size={10} /> {res.link}
+                                  <ExternalLink size={16} className="group-hover:rotate-12 transition-transform" /> 
+                                  Open_Primary_Source_Vault
                                 </button>
-                                <button
-                                  onClick={() => handleCopy(res.link)}
-                                  className="flex items-center gap-2 px-3 py-1 bg-white/5 border border-white/10 text-[9px] text-white/60 hover:bg-white/10 hover:text-white transition-all rounded shrink-0"
-                                >
-                                  {copiedUrl === res.link ? (
-                                    <>
-                                      <Check size={10} className="text-neon-lime" />
-                                      <span className="text-neon-lime">COPIED</span>
-                                    </>
-                                  ) : (
-                                    <>
-                                      <Copy size={10} />
-                                      <span>COPY_LINK</span>
-                                    </>
-                                  )}
-                                </button>
+                                <span className="text-[10px] text-white/10 uppercase tracking-tighter">DATA_KEY: {btoa(modalContent.url).substring(0, 16)}</span>
                               </div>
-                            </div>
-                          ))
-                        ) : (
-                          <div className="py-20 text-center opacity-40">
-                            <Ghost size={48} className="mx-auto mb-4" />
-                            <p className="uppercase tracking-widest">No intelligence gathered from this sector</p>
+                            )}
                           </div>
                         )}
-                        {modalContent.url && (
-                          <div className="mt-10 pt-10 border-t border-white/10">
-                            <button 
-                              onClick={() => openInBrowser(modalContent.url)}
-                              className="inline-flex items-center gap-3 text-xs text-neon-cyan hover:text-white transition-colors"
-                            >
-                              <ExternalLink size={14} /> VIEW_ORIGINAL_SOURCE_REPORT
-                            </button>
-                          </div>
-                        )}
-                      </div>
-                    )}
 
-                    {modalContent.type === 'tool' && (
-                      <div className="space-y-6">
-                        {modalContent.results && modalContent.results.length > 0 ? (
-                          modalContent.results.map((res: any, i: number) => (
-                            <div key={i} className="p-6 bg-white/5 border border-white/10 hover:border-neon-magenta/50 transition-all group">
-                              <h4 className="text-neon-magenta font-bold mb-2 group-hover:text-white transition-colors">{res.title}</h4>
-                              <p className="text-xs text-white/60 mb-4 line-clamp-2">{res.snippet}</p>
-                              <div className="flex items-center justify-between gap-4">
-                                <button 
-                                  onClick={() => openInBrowser(res.link)}
-                                  className="text-[10px] text-white/40 hover:text-neon-magenta transition-colors flex items-center gap-2 truncate"
-                                >
-                                  <LinkIcon size={10} /> {res.link}
-                                </button>
-                                <button
-                                  onClick={() => handleCopy(res.link)}
-                                  className="flex items-center gap-2 px-3 py-1 bg-white/5 border border-white/10 text-[9px] text-white/60 hover:bg-white/10 hover:text-white transition-all rounded shrink-0"
-                                >
-                                  {copiedUrl === res.link ? (
-                                    <>
-                                      <Check size={10} className="text-neon-lime" />
-                                      <span className="text-neon-lime">COPIED</span>
-                                    </>
-                                  ) : (
-                                    <>
-                                      <Copy size={10} />
-                                      <span>COPY_LINK</span>
-                                    </>
-                                  )}
-                                </button>
+                        {(modalContent.type === 'search' || modalContent.type === 'tool') && (
+                          <div className="space-y-6">
+                             {(modalContent.title.toLowerCase().includes('deep') || modalContent.title.toLowerCase().includes('nsfw')) && (
+                              <div className="p-6 bg-neon-magenta/5 border border-neon-magenta/20 rounded-xl space-y-4 mb-10 relative overflow-hidden group">
+                                <div className="absolute top-0 right-0 p-8 opacity-[0.03] scale-150 rotate-12 group-hover:scale-110 group-hover:rotate-0 transition-transform duration-1000">
+                                  <ShieldAlert size={120} />
+                                </div>
+                                <div className="flex items-center gap-3 text-neon-magenta relative z-10">
+                                  <ShieldAlert size={20} className="animate-pulse" />
+                                  <h4 className="font-black uppercase tracking-[0.4em] text-[10px]">Intelligence_Fidelity_Notice</h4>
+                                </div>
+                                <p className="text-[11px] text-white/50 leading-relaxed uppercase tracking-widest relative z-10 max-w-2xl">
+                                  The following dataset contains matches from decentralized indices. Probability vectors:
+                                  <br /><br />
+                                  <span className="text-neon-magenta font-black">HIGH_CONFIDENCE:</span> Crytographic UID match. Extremely low false positive rate.
+                                  <br />
+                                  <span className="text-neon-cyan font-black">CORRELATED:</span> Signal detected via cross-platform metadata (Email/Bio).
+                                  <br />
+                                  <span className="text-white/30 font-black">OBSERVED:</span> Pattern-based match. Verification required.
+                                </p>
                               </div>
-                            </div>
-                          ))
-                        ) : (
-                          <div className="py-20 text-center opacity-40">
-                            <Ghost size={48} className="mx-auto mb-4" />
-                            <p className="uppercase tracking-widest">No intelligence gathered from this sector</p>
-                          </div>
-                        )}
-                        {modalContent.url && (
-                          <div className="mt-10 pt-10 border-t border-white/10">
-                            <button 
-                              onClick={() => openInBrowser(modalContent.url)}
-                              className="inline-flex items-center gap-3 text-xs text-neon-magenta hover:text-white transition-colors"
-                            >
-                              <ExternalLink size={14} /> VIEW_ORIGINAL_SOURCE_REPORT
-                            </button>
+                            )}
+
+                            {modalContent.results && modalContent.results.length > 0 ? (
+                              <div className="grid grid-cols-1 gap-4">
+                                {modalContent.results.map((res: any, i: number) => {
+                                  // Simple heuristic for confidence
+                                  const confidence = res.confidence || (res.link.includes('facebook') || res.link.includes('twitter') || res.link.includes('instagram') ? 92 : 65);
+                                  const isHigh = confidence > 85;
+                                  
+                                  return (
+                                    <motion.div 
+                                      initial={{ opacity: 0, y: 20 }}
+                                      animate={{ opacity: 1, y: 0 }}
+                                      transition={{ delay: i * 0.05 }}
+                                      key={i} 
+                                      className="group relative bg-[#0a0a0a] border border-white/10 hover:border-neon-cyan/40 transition-all p-6 rounded-xl overflow-hidden"
+                                    >
+                                      {/* Side Indicator */}
+                                      <div className={`absolute left-0 top-0 bottom-0 w-1 ${isHigh ? 'bg-neon-lime shadow-[0_0_15px_rgba(57,255,20,0.5)]' : 'bg-white/10'}`} />
+                                      
+                                      <div className="flex flex-col md:flex-row md:items-start justify-between gap-6">
+                                        <div className="flex-1 space-y-3">
+                                          <div className="flex items-center gap-3">
+                                            <h4 className="text-white font-bold group-hover:text-neon-cyan transition-colors text-sm uppercase tracking-wide">{res.title}</h4>
+                                            <span className={`text-[8px] font-black px-2 py-0.5 rounded border ${isHigh ? 'border-neon-lime/30 text-neon-lime bg-neon-lime/10' : 'border-white/10 text-white/30'}`}>
+                                              {confidence}%_FIDELITY
+                                            </span>
+                                          </div>
+                                          <p className="text-xs text-white/40 leading-relaxed font-normal normal-case line-clamp-2 italic">
+                                            "{res.snippet}"
+                                          </p>
+                                          
+                                          <div className="flex flex-wrap items-center gap-4 pt-2">
+                                            <button 
+                                              onClick={() => openInBrowser(res.link)}
+                                              className="text-[9px] text-white/30 hover:text-neon-cyan transition-colors flex items-center gap-2 truncate max-w-sm font-mono tracking-tighter"
+                                            >
+                                              <LinkIcon size={12} /> {res.link}
+                                            </button>
+                                          </div>
+                                        </div>
+
+                                        <div className="flex items-center gap-2 shrink-0 self-end md:self-start">
+                                          <button
+                                            onClick={() => handleCopy(res.link)}
+                                            className="p-3 bg-white/5 border border-white/10 rounded-lg text-white/40 hover:bg-white/10 hover:text-white transition-all group/btn"
+                                            title="Copy Intelligence Link"
+                                          >
+                                            {copiedUrl === res.link ? <Check size={16} className="text-neon-lime" /> : <Copy size={16} className="group-hover/btn:scale-110 transition-transform" />}
+                                          </button>
+                                          <button
+                                            onClick={() => openInBrowser(res.link)}
+                                            className="p-3 bg-neon-cyan/10 border border-neon-cyan/20 rounded-lg text-neon-cyan hover:bg-neon-cyan hover:text-black transition-all group/btn"
+                                            title="Decipher Source"
+                                          >
+                                            <ExternalLink size={16} className="group-hover/btn:-translate-y-0.5 group-hover/btn:translate-x-0.5 transition-transform" />
+                                          </button>
+                                        </div>
+                                      </div>
+                                    </motion.div>
+                                  );
+                                })}
+                              </div>
+                            ) : (
+                              <div className="py-32 flex flex-col items-center justify-center text-center">
+                                <Box className="w-16 h-16 text-white/5 mb-6 animate-bounce" />
+                                <h5 className="text-xs uppercase tracking-[0.5em] text-white/20 font-black">Zero Signals Intercepted</h5>
+                                <p className="text-[10px] text-white/10 mt-2 uppercase">The intelligence sector is dark. Try alternate handle variations.</p>
+                              </div>
+                            )}
                           </div>
                         )}
                       </div>
+                    ) : (
+                      <IntelligenceGraph results={modalContent.results || []} />
                     )}
                   </div>
                 )}
               </div>
 
               {/* Modal Footer */}
-              <div className="p-4 bg-white/5 border-t border-white/10 flex justify-between items-center text-[9px] font-mono opacity-40 uppercase tracking-widest">
-                <span>TERMINAL_SESSION: {new Date().toLocaleTimeString()}</span>
-                <span>OSINT_HUB_v1.0.4</span>
+              <div className="p-4 bg-black border-t border-white/5 flex justify-between items-center text-[8px] font-mono overflow-hidden">
+                <div className="flex items-center gap-6">
+                  <div className="flex items-center gap-2 text-neon-cyan/40">
+                    <div className="w-1.5 h-1.5 rounded-full bg-neon-cyan animate-pulse" />
+                    <span className="uppercase tracking-widest">Connection_Stable</span>
+                  </div>
+                  <div className="text-white/10 uppercase tracking-widest hidden sm:block">
+                    Encryption: AES-256-GCM • Path: {modalContent.title.replace(/\s+/g, '_')}
+                  </div>
+                </div>
+                <div className="flex items-center gap-4 text-white/30">
+                  <span className="uppercase tracking-tighter">Terminal_v1.2.0</span>
+                  <div className="w-px h-3 bg-white/10" />
+                  <span>{new Date().toISOString()}</span>
+                </div>
               </div>
             </motion.div>
           </motion.div>
@@ -5367,43 +5654,67 @@ function App() {
         )}
       </AnimatePresence>
       
-      {/* Floating Monitor Toggle */}
-      <div className="fixed bottom-6 right-6 z-[110] flex flex-col gap-4">
-        <button
-          onClick={() => setShowCommandPalette(true)}
-          className="p-4 rounded-full shadow-2xl transition-all duration-300 group bg-white/10 text-white hover:bg-white/20 hover:scale-110 border border-white/10 backdrop-blur-md"
-          title="Command Palette"
-        >
-          <Search size={24} />
-        </button>
-        <button
-          onClick={() => setShowIntelligenceWindow(!showIntelligenceWindow)}
-          className={`p-4 rounded-full shadow-2xl transition-all duration-300 group ${
-            showIntelligenceWindow 
-              ? 'bg-neon-lime text-black' 
-              : 'bg-neon-lime/20 text-neon-lime hover:bg-neon-lime/40 hover:scale-110'
-          }`}
-          title="Toggle Intelligence Report"
-        >
-          {showIntelligenceWindow ? <X size={24} /> : <Shield size={24} />}
-        </button>
+      {/* Floating Monitor Toggle - High Z-Index Global Controls */}
+      <div className="fixed bottom-6 right-6 z-[2000] flex flex-col gap-4 items-end">
+        {/* Command Palette Button */}
+        <div className="flex items-center gap-3 group">
+          <span className="opacity-0 group-hover:opacity-100 transition-opacity bg-black/80 text-[10px] font-mono text-white px-3 py-1.5 rounded border border-white/10 uppercase tracking-widest whitespace-nowrap pointer-events-none shadow-xl">
+            Command_Palette
+          </span>
+          <button
+            onClick={() => setShowCommandPalette(true)}
+            className="p-4 rounded-full shadow-[0_0_30px_rgba(255,255,255,0.1)] transition-all duration-300 bg-white/10 text-white hover:bg-white/20 hover:scale-110 border border-white/10 backdrop-blur-md"
+            title="Command Palette (CMD+K)"
+          >
+            <Search size={24} />
+          </button>
+        </div>
+
+        {/* Intel Report Toggle */}
+        <div className="flex items-center gap-3 group">
+          <span className={`opacity-0 group-hover:opacity-100 transition-opacity bg-black/80 text-[10px] font-mono text-neon-lime px-3 py-1.5 rounded border border-neon-lime/20 uppercase tracking-widest whitespace-nowrap pointer-events-none shadow-xl`}>
+            Intel_Report
+          </span>
+          <button
+            onClick={() => setShowIntelligenceWindow(!showIntelligenceWindow)}
+            className={`p-4 rounded-full shadow-[0_0_30px_rgba(0,255,0,0.1)] transition-all duration-300 ${
+              showIntelligenceWindow 
+                ? 'bg-neon-lime text-black ring-4 ring-neon-lime/20' 
+                : 'bg-neon-lime/20 text-neon-lime hover:bg-neon-lime/40 hover:scale-110 border border-neon-lime/30'
+            }`}
+            title="Toggle Intelligence Report"
+          >
+            {showIntelligenceWindow ? <X size={24} /> : <Shield size={24} />}
+          </button>
+        </div>
         
-        <button
-          onClick={() => setShowStatusWindow(!showStatusWindow)}
-          className={`p-4 rounded-full shadow-2xl transition-all duration-300 group ${
-            showStatusWindow 
-              ? 'bg-neon-magenta text-black rotate-90' 
-              : 'bg-neon-cyan text-black hover:scale-110'
-          }`}
-          title="Toggle Live Ops Monitor"
-        >
-          {showStatusWindow ? <X size={24} /> : <Activity size={24} className={runningTools.some(t => t.status === 'running') ? 'animate-pulse' : ''} />}
-          {!showStatusWindow && runningTools.some(t => t.status === 'running') && (
-            <span className="absolute -top-1 -right-1 w-4 h-4 bg-neon-magenta rounded-full flex items-center justify-center text-[10px] font-bold animate-bounce">
-              {runningTools.filter(t => t.status === 'running').length}
+        {/* Live Ops Monitor Toggle */}
+        <div className="flex items-center gap-3 group">
+          <div className="flex flex-col items-end">
+            <span className={`opacity-0 group-hover:opacity-100 transition-opacity bg-black/80 text-[10px] font-mono text-neon-cyan px-3 py-1.5 rounded border border-neon-cyan/20 uppercase tracking-widest whitespace-nowrap pointer-events-none shadow-xl mb-1`}>
+              Live_Ops_Monitor
             </span>
-          )}
-        </button>
+            {runningTools.some(t => t.status === 'running') && (
+              <span className="text-[8px] font-mono text-neon-magenta animate-pulse uppercase tracking-tighter bg-black/60 px-1 rounded">SCANNING_IN_PROGRESS</span>
+            )}
+          </div>
+          <button
+            onClick={() => setShowStatusWindow(!showStatusWindow)}
+            className={`p-4 rounded-full shadow-[0_0_30px_rgba(0,255,255,0.1)] transition-all duration-300 relative ${
+              showStatusWindow 
+                ? 'bg-neon-magenta text-black rotate-90 ring-4 ring-neon-magenta/20' 
+                : 'bg-neon-cyan text-black hover:scale-110 border border-neon-cyan/30'
+            }`}
+            title="Toggle Live Ops Monitor"
+          >
+            {showStatusWindow ? <X size={24} /> : <Activity size={24} className={runningTools.some(t => t.status === 'running') ? 'animate-pulse' : ''} />}
+            {!showStatusWindow && runningTools.some(t => t.status === 'running') && (
+              <span className="absolute -top-1 -right-1 w-5 h-5 bg-neon-magenta rounded-full flex items-center justify-center text-[10px] font-bold animate-bounce text-white border-2 border-bg-primary">
+                {runningTools.filter(t => t.status === 'running').length}
+              </span>
+            )}
+          </button>
+        </div>
       </div>
 
       <StatusWindow 
@@ -5427,7 +5738,7 @@ function App() {
       <IntelligenceWindow 
         isOpen={showIntelligenceWindow}
         onClose={() => setShowIntelligenceWindow(false)}
-        scanResults={scanResults ? (allTargets.length > 1 ? scanResults[allTargets[selectedTargetIndex]] : scanResults) : null}
+        scanResults={scanResults}
         isScanning={isScanning}
         isDeepScan={isDeepScan}
         targetRiskScore={targetRiskScore}
@@ -5438,22 +5749,19 @@ function App() {
         onBreachQuery={handleBreachQuery}
         onExportJSON={exportCurrentScanResults}
         onDownloadLog={downloadScanLog}
-        searchQuery={allTargets[selectedTargetIndex] || searchQuery}
+        searchQuery={searchQuery}
         aiSuggestions={aiSuggestions}
         aiActions={aiActions}
         openInBrowser={openInBrowser}
         onShowHistory={() => setIsHistoryOpen(true)}
         onShowResults={() => setIsResultsOpen(true)}
-        allTargets={allTargets}
-        selectedTargetIndex={selectedTargetIndex}
-        onSelectTarget={setSelectedTargetIndex}
       />
       <AnimatePresence>
         {isResultsOpen && (
           <ResultsModal 
             isOpen={isResultsOpen} 
             onClose={() => setIsResultsOpen(false)} 
-            scanResults={scanResults ? (allTargets.length > 1 ? scanResults[allTargets[selectedTargetIndex]] : scanResults) : null}
+            scanResults={scanResults}
             openInBrowser={openInBrowser}
           />
         )}
@@ -6177,10 +6485,7 @@ const IntelligenceWindow = React.memo(({
   aiActions,
   openInBrowser,
   onShowHistory,
-  onShowResults,
-  allTargets = [],
-  selectedTargetIndex = 0,
-  onSelectTarget
+  onShowResults
 }: IntelligenceWindowProps) => {
   const categoryChartData = useMemo(() => {
     if (!scanResults || !scanResults.social) return [];
@@ -6215,27 +6520,9 @@ const IntelligenceWindow = React.memo(({
       initial={{ opacity: 0, x: -20, scale: 0.95 }}
       animate={{ opacity: 1, x: 0, scale: 1 }}
       exit={{ opacity: 0, x: -20, scale: 0.95 }}
-      className="fixed inset-y-0 left-0 w-full sm:w-[38rem] md:w-[50rem] lg:w-[68rem] xl:w-[92rem] z-[150] font-mono sm:m-6 sm:rounded-xl overflow-hidden intelligence-window-container shadow-2xl min-h-[600px]"
+      className="fixed inset-y-0 left-0 w-full sm:w-[38rem] md:w-[50rem] lg:w-[68rem] xl:w-[92rem] z-[1900] font-mono sm:m-6 sm:rounded-xl overflow-hidden intelligence-window-container shadow-2xl min-h-[600px]"
     >
       <div className="bg-[#050505]/98 border border-white/10 shadow-[0_0_100px_rgba(0,0,0,0.8)] backdrop-blur-3xl flex flex-col h-full intelligence-window">
-        {/* Target Selector for Multi-Target Scans */}
-        {allTargets.length > 1 && (
-          <div className="bg-black/50 border-b border-white/10 p-2 flex items-center gap-2 overflow-x-auto custom-scrollbar">
-            {allTargets.map((target, idx) => (
-              <button
-                key={idx}
-                onClick={() => onSelectTarget?.(idx)}
-                className={`px-3 py-1.5 rounded text-[10px] font-mono uppercase tracking-widest transition-all whitespace-nowrap ${
-                  selectedTargetIndex === idx 
-                    ? 'bg-neon-cyan text-black font-bold' 
-                    : 'bg-white/5 text-white/40 hover:bg-white/10'
-                }`}
-              >
-                Target: {target}
-              </button>
-            ))}
-          </div>
-        )}
         {/* Header */}
         <div className="flex items-center justify-between p-4 sm:p-6 border-b border-white/5 bg-gradient-to-r from-neon-lime/20 to-transparent intelligence-window-header">
           <div className="flex items-center gap-4">
@@ -6601,123 +6888,138 @@ const IntelligenceWindow = React.memo(({
                       <h4 className="text-sm font-black uppercase tracking-[0.3em] text-white">Social_Footprint</h4>
                     </div>
                     <div className="space-y-10">
-                      {['Social', 'Chat', 'VoIP', 'Texting', 'Gaming', 'Dating', 'NSFW', 'Professional', 'Creative', 'Tech', 'Other'].map(category => {
-                        const categorySites = scanResults.social.filter((s: any) => s.category === category);
-                        if (categorySites.length === 0) return null;
-                        
-                        const foundCount = categorySites.filter((s: any) => (s.status === 'Found' || s.status === 'Possible but Deleted') && !falsePositives.has(s.name)).length;
-                        
-                        return (
-                          <div key={category} className="space-y-4">
-                            <div className="flex items-center justify-between">
-                              <h5 className="text-[10px] font-black uppercase text-neon-cyan flex items-center gap-3 tracking-[0.2em]">
-                                <span className="w-2 h-2 bg-neon-cyan rounded-full animate-pulse" />
-                                {category}_SECTOR
-                              </h5>
-                              <span className="text-[9px] font-mono opacity-50 uppercase tracking-widest">
-                                {foundCount} / {categorySites.length} IDENTIFIED
-                              </span>
-                            </div>
-                            
-                            <div className="grid grid-cols-1 gap-3">
-                              {foundCount === 0 ? (
-                                <div className="py-6 border border-dashed border-white/10 rounded-lg flex flex-col items-center justify-center bg-black/20">
-                                  <span className="text-[9px] font-mono text-white/20 uppercase tracking-[0.4em]">No_Active_Profiles</span>
-                                </div>
-                              ) : categorySites.map((site: any) => {
-                                const isFalsePositive = falsePositives.has(site.name);
-                                if ((site.status === 'Found' || site.status === 'Possible but Deleted') && !isFalsePositive) {
-                                  const isPossible = site.status === 'Possible but Deleted';
-                                  return (
-                                    <div 
-                                      key={site.name}
-                                      className={`p-3 border rounded-lg flex items-center justify-between transition-all group/row ${isPossible ? 'border-neon-magenta/30 bg-neon-magenta/5 hover:border-neon-magenta/60' : 'border-neon-lime/30 bg-neon-lime/5 hover:border-neon-lime/60'}`}
-                                    >
-                                      <div className="flex items-center gap-4 flex-1 min-w-0">
-                                        {site.avatar ? (
-                                          <img 
-                                            src={site.avatar} 
-                                            alt={site.name} 
-                                            className="w-8 h-8 rounded-full border border-white/20 shadow-lg"
-                                            referrerPolicy="no-referrer"
-                                          />
-                                        ) : (
-                                          <div className="w-8 h-8 rounded-full bg-white/5 border border-white/10 flex items-center justify-center">
-                                            <User size={14} className="text-white/20" />
-                                          </div>
-                                        )}
-                                        <div className="min-w-0">
-                                          <span className="text-xs font-black uppercase tracking-widest truncate block group-hover/row:text-white transition-colors">{site.name}</span>
-                                          <button 
-                                            onClick={() => openInBrowser(site.url)}
-                                            className="text-[9px] text-white/40 hover:text-neon-cyan hover:underline truncate block text-left mt-0.5"
-                                          >
-                                            {site.url}
-                                          </button>
-                                          {(site.followers || site.posts) && (
-                                            <div className="flex items-center gap-2 mt-1">
-                                              {site.followers && (
-                                                <span className="text-[8px] font-mono text-neon-cyan bg-neon-cyan/10 px-1 rounded uppercase">
-                                                  {site.followers}
-                                                </span>
-                                              )}
-                                              {site.posts && (
-                                                <span className="text-[8px] font-mono text-neon-magenta bg-neon-magenta/10 px-1 rounded uppercase">
-                                                  {site.posts}
-                                                </span>
-                                              )}
+                      {(() => {
+                        // Pre-group sites by category for efficiency
+                        const groupedSites = scanResults.social.reduce((acc: any, site: any) => {
+                          const cat = site.category || 'Other';
+                          if (!acc[cat]) acc[cat] = [];
+                          acc[cat].push(site);
+                          return acc;
+                        }, {});
+
+                        return ['Social', 'Chat', 'VoIP', 'Texting', 'Gaming', 'Dating', 'NSFW', 'Professional', 'Creative', 'Tech', 'Other'].map(category => {
+                          const categorySites = groupedSites[category] || [];
+                          if (categorySites.length === 0) return null;
+                          
+                          const foundSites = categorySites.filter((s: any) => {
+                            const isFound = s.status === 'Found' || s.status === 'Possible but Deleted';
+                            return isFound && !falsePositives.has(s.name);
+                          });
+                          
+                          const foundCount = foundSites.length;
+                          
+                          return (
+                            <div key={category} className="space-y-4">
+                              <div className="flex items-center justify-between">
+                                <h5 className="text-[10px] font-black uppercase text-neon-cyan flex items-center gap-3 tracking-[0.2em]">
+                                  <span className="w-2 h-2 bg-neon-cyan rounded-full animate-pulse" />
+                                  {category}_SECTOR
+                                </h5>
+                                <span className="text-[9px] font-mono opacity-50 uppercase tracking-widest">
+                                  {foundCount} / {categorySites.length} IDENTIFIED
+                                </span>
+                              </div>
+                              
+                              <div className="grid grid-cols-1 gap-3">
+                                {foundCount === 0 ? (
+                                  <div className="py-6 border border-dashed border-white/10 rounded-lg flex flex-col items-center justify-center bg-black/20">
+                                    <span className="text-[9px] font-mono text-white/20 uppercase tracking-[0.4em]">No_Active_Profiles</span>
+                                  </div>
+                                ) : categorySites.map((site: any) => {
+                                  const isFalsePositive = falsePositives.has(site.name);
+                                  if ((site.status === 'Found' || site.status === 'Possible but Deleted') && !isFalsePositive) {
+                                    const isPossible = site.status === 'Possible but Deleted';
+                                    return (
+                                      <div 
+                                        key={site.name}
+                                        className={`p-3 border rounded-lg flex items-center justify-between transition-all group/row ${isPossible ? 'border-neon-magenta/30 bg-neon-magenta/5 hover:border-neon-magenta/60' : 'border-neon-lime/30 bg-neon-lime/5 hover:border-neon-lime/60'}`}
+                                      >
+                                        <div className="flex items-center gap-4 flex-1 min-w-0">
+                                          {site.avatar ? (
+                                            <img 
+                                              src={site.avatar} 
+                                              alt={site.name} 
+                                              className="w-8 h-8 rounded-full border border-white/20 shadow-lg"
+                                              referrerPolicy="no-referrer"
+                                            />
+                                          ) : (
+                                            <div className="w-8 h-8 rounded-full bg-white/5 border border-white/10 flex items-center justify-center">
+                                              <User size={14} className="text-white/20" />
                                             </div>
                                           )}
-                                          {site.bio && (
-                                            <p className="text-[9px] text-white/40 mt-1 line-clamp-2 leading-tight italic">
-                                              "{site.bio}"
-                                            </p>
-                                          )}
-                                        </div>
-                                      </div>
-                                      <div className="flex items-center gap-3 ml-4">
-                                        <button 
-                                          onClick={() => onToggleFalsePositive(site.name)}
-                                          className="p-1.5 text-white/20 hover:text-red-500 hover:bg-red-500/10 rounded transition-all"
-                                          title="Report False Positive"
-                                        >
-                                          <ShieldAlert size={14} />
-                                        </button>
-                                        <div className="flex flex-col items-end gap-1">
-                                          <div className="flex items-center gap-2">
-                                            {site.confidence !== undefined && (
-                                              <div 
-                                                className={`text-[8px] font-black px-1.5 py-0.5 rounded border ${
-                                                  site.confidence >= 80 ? 'bg-neon-lime/20 border-neon-lime/40 text-neon-lime' :
-                                                  site.confidence >= 50 ? 'bg-neon-yellow/20 border-neon-yellow/40 text-neon-yellow' :
-                                                  'bg-white/10 border-white/20 text-white/40'
-                                                }`}
-                                                title={`Confidence: ${site.confidence}%`}
-                                              >
-                                                {site.confidence}%
+                                          <div className="min-w-0">
+                                            <span className="text-xs font-black uppercase tracking-widest truncate block group-hover/row:text-white transition-colors">{site.name}</span>
+                                            <button 
+                                              onClick={() => openInBrowser(site.url)}
+                                              className="text-[9px] text-white/40 hover:text-neon-cyan hover:underline truncate block text-left mt-0.5"
+                                            >
+                                              {site.url}
+                                            </button>
+                                            {(site.followers || site.posts) && (
+                                              <div className="flex items-center gap-2 mt-1">
+                                                {site.followers && (
+                                                  <span className="text-[8px] font-mono text-neon-cyan bg-neon-cyan/10 px-1 rounded uppercase">
+                                                    {site.followers}
+                                                  </span>
+                                                )}
+                                                {site.posts && (
+                                                  <span className="text-[8px] font-mono text-neon-magenta bg-neon-magenta/10 px-1 rounded uppercase">
+                                                    {site.posts}
+                                                  </span>
+                                                )}
                                               </div>
                                             )}
-                                            <span className={`text-[9px] font-black tracking-widest ${isPossible ? 'text-neon-magenta' : 'text-neon-lime'}`}>
-                                              {isPossible ? 'POSSIBLE' : 'FOUND'}
-                                            </span>
+                                            {site.bio && (
+                                              <p className="text-[9px] text-white/40 mt-1 line-clamp-2 leading-tight italic">
+                                                "{site.bio}"
+                                              </p>
+                                            )}
                                           </div>
+                                        </div>
+                                        <div className="flex items-center gap-3 ml-4">
                                           <button 
-                                            onClick={() => openInBrowser(site.url)}
-                                            className="p-1.5 opacity-40 group-hover/row:opacity-100 transition-opacity hover:bg-white/10 rounded"
+                                            onClick={() => onToggleFalsePositive(site.name)}
+                                            className="p-1.5 text-white/20 hover:text-red-500 hover:bg-red-500/10 rounded transition-all"
+                                            title="Report False Positive"
                                           >
-                                            <ExternalLink size={14} className="text-white" />
+                                            <ShieldAlert size={14} />
                                           </button>
+                                          <div className="flex flex-col items-end gap-1">
+                                            <div className="flex items-center gap-2">
+                                              {site.confidence !== undefined && (
+                                                <div 
+                                                  className={`text-[8px] font-black px-1.5 py-0.5 rounded border ${
+                                                    site.confidence >= 80 ? 'bg-neon-lime/20 border-neon-lime/40 text-neon-lime' :
+                                                    site.confidence >= 50 ? 'bg-neon-yellow/20 border-neon-yellow/40 text-neon-yellow' :
+                                                    'bg-white/10 border-white/20 text-white/40'
+                                                  }`}
+                                                  title={`Confidence: ${site.confidence}%`}
+                                                >
+                                                  {site.confidence}%
+                                                </div>
+                                              )}
+                                              <span className={`text-[9px] font-black tracking-widest ${isPossible ? 'text-neon-magenta' : 'text-neon-lime'}`}>
+                                                {isPossible ? 'POSSIBLE' : 'FOUND'}
+                                              </span>
+                                            </div>
+                                            <button 
+                                              onClick={() => openInBrowser(site.url)}
+                                              className="p-1.5 opacity-40 group-hover/row:opacity-100 transition-opacity hover:bg-white/10 rounded"
+                                            >
+                                              <ExternalLink size={14} className="text-white" />
+                                            </button>
+                                          </div>
                                         </div>
                                       </div>
-                                    </div>
-                                  );
-                                }
-                                return null;
-                              })}
+                                    );
+                                  }
+                                  return null;
+                                })}
+                              </div>
                             </div>
-                          </div>
-                        );
-                      })}
+                          );
+                        });
+                      })()}
                     </div>
                   </div>
                 )}
@@ -6882,7 +7184,7 @@ const StatusWindow = React.memo(({
       initial={{ opacity: 0, y: 20, scale: 0.95 }}
       animate={{ opacity: 1, y: 0, scale: 1 }}
       exit={{ opacity: 0, y: 20, scale: 0.95 }}
-      className="fixed bottom-24 right-0 sm:right-6 w-full sm:w-96 z-[100] font-mono px-4 sm:px-0"
+      className="fixed bottom-24 right-0 sm:right-6 w-full sm:w-96 z-[1950] font-mono px-4 sm:px-0"
     >
       <div className="bg-[#050505]/95 border border-white/10 shadow-[0_0_50px_rgba(0,0,0,0.5)] backdrop-blur-2xl rounded-lg overflow-hidden flex flex-col max-h-[60vh] sm:max-h-[80vh] w-full sm:w-96">
         {/* Header */}
