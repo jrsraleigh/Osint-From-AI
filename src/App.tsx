@@ -75,6 +75,7 @@ import {
   BarChart3,
   PieChart as LucidePieChart,
   Network,
+  Eye,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import html2canvas from 'html2canvas';
@@ -97,6 +98,7 @@ interface IntelligenceWindowProps {
   onToolSearch: (toolOrName: OSINTTool | string, customUrl?: string) => void;
   onBreachQuery: (toolName: string, url: string) => void;
   onExportJSON: () => void;
+  onExportPDF: () => void;
   onDownloadLog: () => void;
   searchQuery: string;
   aiSuggestions: {name: string, reason: string, directLink?: string}[];
@@ -537,6 +539,19 @@ function App() {
     setSearchHistory(prev => prev.filter(q => q !== query));
   };
 
+  const [scanHistory, setScanHistory] = useState<any[]>(() => {
+    const saved = localStorage.getItem('osintScanHistory');
+    if (saved) {
+      try {
+        return JSON.parse(saved);
+      } catch (e) {
+        console.error('Failed to parse scan history:', e);
+        return [];
+      }
+    }
+    return [];
+  });
+
   const [premadeDorkPresets, setPremadeDorkPresets] = useState(() => {
     const saved = localStorage.getItem('premadeDorkPresets');
     const initial = [
@@ -586,9 +601,67 @@ function App() {
     URL.revokeObjectURL(url);
   };
 
+  const exportDossierPDF = async () => {
+    const element = document.querySelector('.intelligence-window-container') as HTMLElement;
+    if (!element) return;
+
+    try {
+      const button = document.querySelector('.pdf-export-btn') as HTMLButtonElement;
+      if (button) button.disabled = true;
+
+      const canvas = await html2canvas(element, {
+        backgroundColor: '#050505',
+        scale: 2,
+        useCORS: true,
+        logging: false,
+        onclone: (clonedDoc) => {
+          const el = clonedDoc.querySelector('.intelligence-window-container') as HTMLElement;
+          if (el) {
+            el.style.margin = '0';
+            el.style.padding = '20px';
+            el.style.height = 'auto';
+            el.style.maxHeight = 'none';
+            el.style.overflow = 'visible';
+            
+            const content = clonedDoc.querySelector('.intelligence-window') as HTMLElement;
+            if (content) {
+              content.style.maxHeight = 'none';
+              content.style.height = 'auto';
+            }
+            
+            const scrollArea = clonedDoc.querySelector('.custom-scrollbar') as HTMLElement;
+            if (scrollArea) {
+              scrollArea.style.maxHeight = 'none';
+              scrollArea.style.overflow = 'visible';
+              scrollArea.style.height = 'auto';
+            }
+          }
+        }
+      });
+      
+      const imgData = canvas.toDataURL('image/png');
+      const pdf = new jsPDF('p', 'mm', 'a4');
+      const imgProps = pdf.getImageProperties(imgData);
+      const pdfWidth = pdf.internal.pageSize.getWidth();
+      const pdfHeight = (imgProps.height * pdfWidth) / imgProps.width;
+      
+      pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight);
+      pdf.save(`DOSSIER_REPORT_${searchQuery.replace(/[^a-z0-9]/gi, '_').toUpperCase()}.pdf`);
+      
+      if (button) button.disabled = false;
+    } catch (error) {
+      console.error('PDF generation failed:', error);
+      alert('Failed to generate PDF dossier. Please try again.');
+    }
+  };
+
   useEffect(() => {
     localStorage.setItem('osintSearchHistory', JSON.stringify(searchHistory));
   }, [searchHistory]);
+
+  useEffect(() => {
+    localStorage.setItem('osintScanHistory', JSON.stringify(scanHistory));
+  }, [scanHistory]);
 
   useEffect(() => {
     localStorage.setItem('customDorkPresets', JSON.stringify(customDorkPresets));
@@ -602,6 +675,13 @@ function App() {
     const timer = setTimeout(() => setDebouncedSearchQuery(searchQuery), 300);
     return () => clearTimeout(timer);
   }, [searchQuery]);
+  const scrollToSearch = () => {
+    const searchInput = document.querySelector('input[placeholder*="SEARCH"]') as HTMLInputElement;
+    if (searchInput) {
+      searchInput.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      searchInput.focus();
+    }
+  };
   const searchRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -1047,7 +1127,6 @@ function App() {
   const [showHistoryDropdown, setShowHistoryDropdown] = useState(false);
   const [historyIndex, setHistoryIndex] = useState(-1);
   const [savedSearches, setSavedSearches] = useState<string[]>([]);
-  const [scanHistory, setScanHistory] = useState<any[]>([]);
   const [customApiKeys, setCustomApiKeys] = useState<Record<string, string>>({});
   const [selectedToolIds, setSelectedToolIds] = useState<Set<string>>(new Set());
   const [selectedToolForModal, setSelectedToolForModal] = useState<OSINTTool | null>(null);
@@ -2187,12 +2266,18 @@ function App() {
             promises.push(Promise.resolve(null));
           }
           
-          promises.push(runTool('SOCIAL_PRESENCE', `/api/osint/social?target=${query}`, undefined, 'Social'));
+          // Differentiated social searches
+          promises.push(runTool('SOCIAL_PRESENCE (SHERLOCK)', `/api/osint/social?target=${query}&tool=sherlock`, undefined, 'Social'));
+          promises.push(runTool('SOCIAL_DOSSIER (MAIGRET)', `/api/osint/social?target=${query}&tool=maigret`, undefined, 'Social'));
           
-          const [whoisRes, dnsRes, socialRes] = await Promise.all(promises);
+          const [whoisRes, dnsRes, sherlockRes, maigretRes] = await Promise.all(promises);
           results.whois = whoisRes;
           results.dns = dnsRes;
-          results.social = socialRes;
+          
+          // Merge specialized social results
+          const combinedSocial = [...(sherlockRes || []), ...(maigretRes || [])];
+          const uniqueSocial = Array.from(new Map(combinedSocial.map(s => [s.name, s])).values());
+          results.social = uniqueSocial;
         } else {
           if (isDomain) {
             const [whoisRes, dnsRes] = await Promise.all([
@@ -2204,19 +2289,31 @@ function App() {
           }
 
           if (isUsername || isEmail) {
-            results.social = await runTool('SOCIAL_PRESENCE', `/api/osint/social?target=${query}`, undefined, 'Social');
+            results.social = await runTool('SOCIAL_IDENTIFIER', `/api/osint/social?target=${query}`, undefined, 'Social');
           }
 
           if (isEmail) {
             const [ghuntRes, epieosRes, holeheRes] = await Promise.all([
-              runTool('GHUNT_SCAN', `/api/osint/search?q=${encodeURIComponent(`"${query}" google account -inurl:login -inurl:signin -inurl:signup`)}`, 'ghunt', 'Email'),
-              runTool('EPIEOS_SCAN', `/api/osint/search?q=${encodeURIComponent(`site:epieos.com "${query}"`)}`, 'epieos', 'Email'),
-              runTool('HOLEHE_SCAN', `/api/osint/search?q=${encodeURIComponent(`"${query}" account -inurl:login -inurl:signin -inurl:signup`)}`, 'holehe', 'Email')
+              runTool('GSYNC_RECON', `/api/osint/search?q=${encodeURIComponent(`"${query}" google account -inurl:login -inurl:signin -inurl:signup`)}`, 'ghunt', 'Email'),
+              runTool('EPIEOS_PROFILER', `/api/osint/search?q=${encodeURIComponent(`site:epieos.com "${query}"`)}`, 'epieos', 'Email'),
+              runTool('HOLEHE_VERIFIER', `/api/osint/search?q=${encodeURIComponent(`"${query}" account existence check site:social-identifier.com`)}`, 'holehe', 'Email')
             ]);
             results.ghunt = ghuntRes;
             results.epieos = epieosRes;
             results.holehe = holeheRes;
           }
+        }
+
+        // Add confidence scoring to results
+        if (results.social && Array.isArray(results.social)) {
+          results.social = results.social.map((s: any) => {
+            let confidence = 50; // Base confidence
+            if (s.status === 'Found') confidence += 20;
+            if (s.avatar) confidence += 10;
+            if (s.bio) confidence += 10;
+            if (s.followers || s.posts) confidence += 10;
+            return { ...s, confidence: Math.min(confidence, 100) };
+          });
         }
 
         // Add to history
@@ -5147,7 +5244,7 @@ function App() {
                     onClick={() => {
                       if (window.confirm('IRREVERSIBLE: Purge all intelligence archives?')) {
                         setScanHistory([]);
-                        localStorage.removeItem('osint_scan_history');
+                        localStorage.removeItem('osintScanHistory');
                       }
                     }}
                     className="px-4 py-2 border border-neon-magenta/30 text-[10px] font-mono text-neon-magenta uppercase tracking-widest hover:bg-neon-magenta hover:text-black transition-all"
@@ -5609,7 +5706,7 @@ function App() {
                               </div>
                             ) : (
                               <div className="py-32 flex flex-col items-center justify-center text-center">
-                                <Box className="w-16 h-16 text-white/5 mb-6 animate-bounce" />
+                                <Database className="w-16 h-16 text-white/5 mb-6 animate-bounce" />
                                 <h5 className="text-xs uppercase tracking-[0.5em] text-white/20 font-black">Zero Signals Intercepted</h5>
                                 <p className="text-[10px] text-white/10 mt-2 uppercase">The intelligence sector is dark. Try alternate handle variations.</p>
                               </div>
@@ -5748,6 +5845,7 @@ function App() {
         onToolSearch={handleToolSearch}
         onBreachQuery={handleBreachQuery}
         onExportJSON={exportCurrentScanResults}
+        onExportPDF={exportDossierPDF}
         onDownloadLog={downloadScanLog}
         searchQuery={searchQuery}
         aiSuggestions={aiSuggestions}
@@ -6073,7 +6171,7 @@ const HistoryModal = ({ isOpen, onClose, history, onSelect, setScanResults, setI
           <button 
             onClick={() => {
               if (window.confirm('Clear all history?')) {
-                localStorage.removeItem('osint_scan_history');
+                localStorage.removeItem('osintScanHistory');
                 window.location.reload();
               }
             }}
@@ -6479,6 +6577,7 @@ const IntelligenceWindow = React.memo(({
   onToolSearch, 
   onBreachQuery, 
   onExportJSON, 
+  onExportPDF,
   onDownloadLog,
   searchQuery,
   aiSuggestions,
@@ -6550,10 +6649,16 @@ const IntelligenceWindow = React.memo(({
               <BarChart3 size={14} /> Results
             </button>
             <button 
+              onClick={onExportPDF}
+              className="pdf-export-btn flex items-center gap-2 px-3 py-1.5 bg-white/5 border border-white/10 rounded text-[10px] text-white/60 hover:text-white hover:bg-white/10 transition-all uppercase tracking-widest disabled:opacity-50"
+            >
+              <FileText size={14} /> Export_PDF
+            </button>
+            <button 
               onClick={onExportJSON}
               className="hidden sm:flex items-center gap-2 px-3 py-1.5 bg-white/5 border border-white/10 rounded text-[10px] text-white/60 hover:text-white hover:bg-white/10 transition-all uppercase tracking-widest"
             >
-              <Download size={14} /> Export
+              <Download size={14} /> Export_JSON
             </button>
             <button 
               onClick={onClose}

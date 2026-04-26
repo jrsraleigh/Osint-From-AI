@@ -343,14 +343,15 @@ export const OSINT_TOOLS: OSINTTool[] = [
   {
     id: '2',
     name: 'Sherlock',
-    description: 'Hunt down social media accounts by username across hundreds of social networks.',
+    description: 'Hunt down social media accounts by username across hundreds of social networks using platform signatures.',
     url: 'https://github.com/sherlock-project/sherlock',
-    searchUrl: `https://www.google.com/search?q="{query}"+(inurl:profile+OR+inurl:user+OR+inurl:u+OR+inurl:p)+-inurl:login+-inurl:signin+-inurl:signup+(${GLOBAL_SOCIAL_NSFW_DORK})`,
+    searchUrl: `https://www.google.com/search?q=site:instagram.com+OR+site:twitter.com+OR+site:facebook.com+OR+site:reddit.com+OR+site:github.com+OR+site:linkedin.com+"{query}"`,
     category: 'Social Media',
     tags: ['Username', 'Social Media', 'CLI', 'Account Finder', 'Footprinting', 'SOCMINT'],
-    howToUse: 'Run via CLI: python3 sherlock.py username. It will check hundreds of social media sites for the existence of that username.',
+    howToUse: 'Run via CLI: python3 sherlock.py username. Focuses on direct profile signature matching. Cross-reference hits to ensure the profile actually belongs to the target.',
     combinations: ['Maigret', 'Blackbird', 'WhatsMyName Web'],
-    isFree: true
+    isFree: true,
+    info: 'Sherlock is highly effective for high-confidence profile discovery. 100% hits are based on existence signatures but can be false positives if the username is common.'
   },
   {
     id: '3',
@@ -531,26 +532,28 @@ export const OSINT_TOOLS: OSINTTool[] = [
   {
     id: '18',
     name: 'Holehe',
-    description: 'Check if an email is used on over 120 websites, including social media.',
+    description: 'Check if an email is used on over 120 websites, including social media, via password recovery triggers.',
     url: 'https://github.com/megadose/holehe',
-    searchUrl: `https://www.google.com/search?q="{query}"+account+-inurl:login+-inurl:signin+-inurl:signup+(${SOCIAL_DORK})`,
+    searchUrl: `https://www.google.com/search?q="{query}"+site:social-identifier.com+OR+"{query}"+site:check-account.com`,
     category: 'Email & Username',
     tags: ['Email', 'Account Finder', 'CLI', 'Social Media', 'Verification', 'SOCMINT'],
-    howToUse: 'Run via CLI: holehe email@example.com. It checks if an email is registered on over 120 websites without alerting the user.',
+    howToUse: 'Run via CLI: holehe email@example.com. It checks if an email is registered on over 120 websites without alerting the user by checking registration endpoints.',
     combinations: ['EPIEOS', 'GHunt', 'Sherlock'],
-    isFree: true
+    isFree: true,
+    info: 'Holehe provides near-certain confirmation of account existence by leveraging site-specific registration logic. False positives are very rare.'
   },
   {
     id: '19',
     name: 'Maigret',
-    description: 'Collect a dossier on a person by username only, checking thousands of sites.',
+    description: 'Collect a dossier on a person by username only, checking thousands of sites and extracting meta-info.',
     url: 'https://github.com/soxoj/maigret',
-    searchUrl: `https://www.google.com/search?q="{query}"+(inurl:profile+OR+inurl:user+OR+inurl:u+OR+inurl:p)+-inurl:login+-inurl:signin+-inurl:signup+(${GLOBAL_SOCIAL_NSFW_DORK})`,
+    searchUrl: `https://www.google.com/search?q="{query}"+dossier+OR+"{query}"+profile+OR+"{query}"+activities`,
     category: 'Social Media',
     tags: ['Username', 'Dossier', 'CLI', 'Social Media', 'Account Finder', 'SOCMINT'],
-    howToUse: 'Run via CLI: maigret username. It builds a detailed dossier by searching for usernames across thousands of sites.',
+    howToUse: 'Run via CLI: maigret username. Focuses on gathering metadata (tags, banners, bio) from hundreds of sites to build a coherent target dossier.',
     combinations: ['Sherlock', 'Blackbird', 'WhatsMyName Web'],
-    isFree: true
+    isFree: true,
+    info: 'Maigret is the go-to for multi-platform data correlation. It helps distinguish between multiple people sharing the same username by analyzing bio metadata.'
   },
   {
     id: '20',
@@ -907,14 +910,15 @@ export const OSINT_TOOLS: OSINTTool[] = [
   {
     id: '51',
     name: 'Blackbird',
-    description: 'An OSINT tool to search for accounts by username in social networks across 100+ websites.',
+    description: 'Find accounts by username on over 500+ social media sites with fast result fetching and unique footprint matching.',
     url: 'https://github.com/p1ngul1n0/blackbird',
-    searchUrl: `https://www.google.com/search?q="{query}"+(inurl:profile+OR+inurl:user+OR+inurl:u+OR+inurl:p)+-inurl:login+-inurl:signin+-inurl:signup+(${GLOBAL_SOCIAL_NSFW_DORK})`,
+    searchUrl: `https://www.google.com/search?q="{query}"+inurl:profile+OR+inurl:user+OR+inurl:member`,
     category: 'Social Media',
     tags: ['Username', 'Social Media', 'CLI', 'Account Finder', 'Footprinting', 'SOCMINT'],
-    howToUse: 'Run the CLI tool with a username to search across over 100 social media platforms. It provides a clean output of found profiles and their URLs.',
+    howToUse: 'Run the CLI tool with a username to search across over 500 social media platforms. It uses custom signatures to find niche forum accounts.',
     combinations: ['Sherlock', 'Maigret', 'WhatsMyName Web'],
-    isFree: true
+    isFree: true,
+    info: 'Blackbird is optimized for speed and niche platform detection. It often finds results that broader scrapers miss by targeting platform-specific URL structures.'
   },
   {
     id: '52',

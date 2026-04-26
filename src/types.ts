@@ -26,6 +26,7 @@ export interface OSINTTool {
   tags: string[];
   faviconUrl?: string;
   isFree: boolean;
+  info?: string; // Additional intelligence info or confidence notes
   aiReason?: string; // Added for AI-driven recommendations
   aiDirectLink?: string; // Added for direct tool access from AI
 }
