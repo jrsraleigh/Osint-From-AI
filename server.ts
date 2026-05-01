@@ -10,6 +10,8 @@ import Parser from 'rss-parser';
 import pLimit from 'p-limit';
 import ExifParser from 'exif-parser';
 
+import { sites as masterSites } from './src/sites.ts';
+
 // Configure axios retry
 axiosRetry(axios, { 
   retries: 3, 
@@ -518,8 +520,8 @@ async function startServer() {
     res.status(status).json({ error: `Wayback Error: ${message}` });
   });
 
-  const searchLimit = pLimit(8); // Further reduced concurrency
-  const socialLimit = pLimit(10); // Further reduced concurrency for social scans
+  const searchLimit = pLimit(20); // Increased concurrency for general searches
+  const socialLimit = pLimit(150); // Significantly increased concurrency for social scans
   
   const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -956,54 +958,10 @@ async function startServer() {
       username = username.split('@')[0];
     }
 
-    const allSites = [
-      // Social Media - Global & Niche
-      { name: 'GitHub', url: `https://github.com/${username}`, category: 'Social' },
-      { name: 'Twitter', url: `https://twitter.com/${username}`, category: 'Social' },
-      { name: 'Instagram', url: `https://instagram.com/${username}`, category: 'Social' },
-      { name: 'Reddit', url: `https://reddit.com/user/${username}`, category: 'Social' },
-      { name: 'Facebook', url: `https://facebook.com/${username}`, category: 'Social' },
-      { name: 'TikTok', url: `https://tiktok.com/@${username}`, category: 'Social' },
-      { name: 'Pinterest', url: `https://pinterest.com/${username}`, category: 'Social' },
-      { name: 'Tumblr', url: `https://${username}.tumblr.com`, category: 'Social' },
-      { name: 'Snapchat', url: `https://snapchat.com/add/${username}`, category: 'Social' },
-      { name: 'VK', url: `https://vk.com/${username}`, category: 'Social' },
-      { name: 'Odnoklassniki', url: `https://ok.ru/${username}`, category: 'Social' },
-      { name: 'Weibo', url: `https://weibo.com/${username}`, category: 'Social' },
-      { name: 'Zhihu', url: `https://www.zhihu.com/people/${username}`, category: 'Social' },
-      { name: 'Baidu', url: `https://tieba.baidu.com/home/main?un=${username}`, category: 'Social' },
-      { name: 'MeWe', url: `https://mewe.com/i/${username}`, category: 'Social' },
-      { name: 'Gab', url: `https://gab.com/${username}`, category: 'Social' },
-      { name: 'Gettr', url: `https://gettr.com/user/${username}`, category: 'Social' },
-      { name: 'Truth Social', url: `https://truthsocial.com/@${username}`, category: 'Social' },
-      { name: 'BeReal', url: `https://bere.al/${username}`, category: 'Social' },
-      { name: 'Lemon8', url: `https://www.lemon8-app.com/${username}`, category: 'Social' },
-      { name: 'Mastodon', url: `https://mastodon.social/@${username}`, category: 'Social' },
-      { name: 'Threads', url: `https://threads.net/@${username}`, category: 'Social' },
-      { name: 'Bluesky', url: `https://bsky.app/profile/${username}`, category: 'Social' },
-      { name: 'Parler', url: `https://parler.com/profile/${username}`, category: 'Social' },
-      { name: 'Rumble', url: `https://rumble.com/user/${username}`, category: 'Social' },
-      { name: 'Odysee', url: `https://odysee.com/@${username}`, category: 'Social' },
-      { name: 'Bitchute', url: `https://bitchute.com/channel/${username}`, category: 'Social' },
-      { name: 'Dailymotion', url: `https://dailymotion.com/${username}`, category: 'Social' },
-      { name: 'LinkedIn', url: `https://linkedin.com/in/${username}`, category: 'Social' },
-      
-      // Creative & Prof
-      { name: 'Medium', url: `https://medium.com/@${username}`, category: 'Creative' },
-      { name: 'Behance', url: `https://behance.net/${username}`, category: 'Creative' },
-      { name: 'Dribbble', url: `https://dribbble.com/${username}`, category: 'Creative' },
-      { name: 'Flickr', url: `https://flickr.com/people/${username}`, category: 'Creative' },
-      { name: 'SoundCloud', url: `https://soundcloud.com/${username}`, category: 'Creative' },
-      { name: 'Vimeo', url: `https://vimeo.com/${username}`, category: 'Creative' },
-      { name: 'DeviantArt', url: `https://www.deviantart.com/${username}`, category: 'Creative' },
-      
-      // Tech
-      { name: 'Keybase', url: `https://keybase.io/${username}`, category: 'Tech' },
-      { name: 'HackerNews', url: `https://news.ycombinator.com/user?id=${username}`, category: 'Tech' },
-      { name: 'ProductHunt', url: `https://www.producthunt.com/@${username}`, category: 'Tech' },
-      { name: 'StackOverflow', url: `https://stackoverflow.com/users/${username}`, category: 'Tech' },
-      { name: 'GitLab', url: `https://gitlab.com/${username}`, category: 'Tech' },
-    ];
+    const allSites = masterSites.map(site => ({
+      ...site,
+      url: site.url.replace('{}', username)
+    }));
 
     let sites: any[] = [];
     if (tool === 'sherlock') {
@@ -1038,28 +996,45 @@ async function startServer() {
 
     // Add a global timeout for the social scan to prevent hangs (3 minutes)
     let timeoutId: any;
-    const socialScanTimeout = new Promise((_, reject) => 
-      timeoutId = setTimeout(() => reject(new Error('Social scan timed out')), 180000)
-    );
+    const startTime = Date.now();
+    const maxExecutionTime = 170000; // 170 seconds, just before the 180s global limit
+
+    const majorSites = ['GitHub', 'Twitter', 'Instagram', 'Reddit', 'Facebook', 'TikTok', 'Pinterest', 'Tumblr', 'LinkedIn', 'YouTube', 'Twitch', 'Snapchat', 'Telegram', 'Discord'];
+    sites.sort((a, b) => {
+      const aMajor = majorSites.includes(a.name) ? 0 : 1;
+      const bMajor = majorSites.includes(b.name) ? 0 : 1;
+      return aMajor - bMajor;
+    });
+
+    const socialAxios = axios.create({
+      timeout: 3500, // Reduced from 4500
+      validateStatus: () => true,
+      headers: {
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Cache-Control': 'no-cache'
+      }
+    });
 
     try {
-      const results = await Promise.race([
-        Promise.all(sites.map((site) => socialLimit(async () => {
-          if (isCancelled) return { name: site.name, url: site.url, category: site.category, status: 'Cancelled' };
-          try {
-            await sleep(Math.random() * 200 + 50); // Reduced jitter for faster scans
-            const response = await axios.get(site.url, { 
-              timeout: 8000, 
-              maxContentLength: 500000, // Limit to 500KB to save memory
-              validateStatus: () => true,
-              headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'Accept-Language': 'en-US,en;q=0.9',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-                'Cache-Control': 'no-cache',
-                'Pragma': 'no-cache'
-              }
-            });
+      const results = await Promise.all(sites.map((site, index) => socialLimit(async () => {
+        if (isCancelled) return { name: site.name, url: site.url, category: site.category, status: 'Cancelled' };
+        
+        // Add a very small staggered delay to prevent bursts
+        if (index > 0) await sleep(50 + (index % 10) * 10);
+
+        // Check if we are approaching the global timeout
+        if (Date.now() - startTime > maxExecutionTime) {
+          return { name: site.name, url: site.url, category: site.category, status: 'Timed Out' };
+        }
+
+        try {
+          const response = await socialAxios.get(site.url, { 
+            maxContentLength: 250000, 
+            headers: {
+              'User-Agent': USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)]
+            }
+          });
         
         // Improved detection logic
         let isFound = response.status === 200;
@@ -1336,18 +1311,54 @@ async function startServer() {
       } catch (error) {
         return { name: site.name, url: site.url, category: site.category, status: 'Error' };
       }
-        }))),
-        socialScanTimeout
-      ]) as any[];
+    })));
 
-      if (timeoutId) clearTimeout(timeoutId);
+    if (isCancelled) return;
+
+      const foundResults = results.filter(r => r.status === 'Found' || r.status === 'Possible but Deleted' || r.status === 'Error' || r.status === 'Timed Out');
       
-      if (isCancelled) {
-        console.log(`[Social] Scan for ${username} was cancelled by client.`);
-        return; // Don't send response if already closed
+      // Auto-generate OSINT suggestions based on findings
+      const suggestions: { name: string, description: string, url: string }[] = [];
+      const platformNames = new Set(foundResults.filter(r => r.status === 'Found').map(r => r.name));
+
+      if (platformNames.has('Discord')) {
+        suggestions.push({
+          name: 'DiscordLookup',
+          description: 'Advanced lookup for Discord user IDs and history.',
+          url: `https://discordlookup.com/user/${username}`
+        });
+        suggestions.push({
+          name: 'Discord.id',
+          description: 'Find Discord user information by ID or username.',
+          url: `https://discord.id/?s=${username}`
+        });
       }
 
-      res.json(results.filter(r => r.status === 'Found' || r.status === 'Possible but Deleted' || r.status === 'Error'));
+      if (platformNames.has('Telegram')) {
+        suggestions.push({
+          name: 'Telegago',
+          description: 'Custom search engine for Telegram groups and channels.',
+          url: `https://cse.google.com/cse?cx=006368593537057042503:efxm6_0u39o`
+        });
+        suggestions.push({
+          name: 'Lyzem',
+          description: 'Deep search engine for Telegram content.',
+          url: `https://lyzem.com/search?q=${username}`
+        });
+      }
+
+      if (platformNames.has('GitHub')) {
+        suggestions.push({
+          name: 'GitHub Desktop OSINT',
+          description: 'Analyze GitHub commits and SSH keys for email/identity.',
+          url: `https://github.com/${username}.patch`
+        });
+      }
+
+      res.json({
+        results: foundResults,
+        suggestions
+      });
     } catch (error) {
       console.error('Social scan failed or timed out:', error.message || error);
       res.status(504).json({ error: 'Social scan timed out' });

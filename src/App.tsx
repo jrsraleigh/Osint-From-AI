@@ -1982,6 +1982,7 @@ function App() {
     setIsScanning(true);
     setIsHistoricalScan(true);
     setIsDeepScan(true);
+    setAiSuggestions([]);
     setActiveTab('Scan');
     if (!scanResults || scanResults.target !== searchQuery) {
       setScanResults(null);
@@ -2013,7 +2014,8 @@ function App() {
           const res = await fetch(api);
           if (res.ok) {
             const data = await res.json();
-            updateToolStatus(runningToolId, { status: 'completed', results: `Found ${Array.isArray(data) ? data.length : Object.keys(data).length} data points` });
+            const count = data.results ? data.results.length : (Array.isArray(data) ? data.length : Object.keys(data).length);
+            updateToolStatus(runningToolId, { status: 'completed', results: `Found ${count} data points` });
             return data;
           }
           const errorData = await res.json().catch(() => ({}));
@@ -2034,9 +2036,29 @@ function App() {
       ]);
 
       results.timeline = timelineRes;
-      results.social = socialRes;
+      results.social = socialRes?.results || socialRes;
+      results.socialSuggestions = socialRes?.suggestions || [];
       results.whois = whoisRes;
       results.dns = dnsRes;
+
+      if (results.socialSuggestions && results.socialSuggestions.length > 0) {
+        setAiSuggestions(prev => {
+          const all = [
+            ...prev, 
+            ...results.socialSuggestions.map((s: any) => ({
+              name: s.name,
+              reason: s.description,
+              directLink: s.url
+            }))
+          ];
+          const seen = new Set();
+          return all.filter(s => {
+            if (seen.has(s.name)) return false;
+            seen.add(s.name);
+            return true;
+          });
+        });
+      }
 
       setScanResults(prev => {
         const updated = { ...prev, ...results };
@@ -2084,9 +2106,31 @@ function App() {
     try {
       const limit = deep ? 1200 : 100;
       const data = await runTool('QUICK_SOCIAL_SCAN', `/api/osint/social?target=${username}&limit=${limit}`, undefined, 'Social');
-      if (data && Array.isArray(data)) {
-        const found = data.filter((s: any) => s.status === 'Found' || s.status === 'Possible but Deleted');
+      const results = data?.results || (Array.isArray(data) ? data : []);
+      const suggestions = data?.suggestions || [];
+
+      if (results.length > 0) {
+        const found = results.filter((s: any) => s.status === 'Found' || s.status === 'Possible but Deleted');
         setQuickSocialResults(found);
+      }
+
+      if (suggestions.length > 0) {
+        setAiSuggestions(prev => {
+          const all = [
+            ...prev,
+            ...suggestions.map((s: any) => ({
+              name: s.name,
+              reason: s.description,
+              directLink: s.url
+            }))
+          ];
+          const seen = new Set();
+          return all.filter(s => {
+            if (seen.has(s.name)) return false;
+            seen.add(s.name);
+            return true;
+          });
+        });
       }
     } catch (error) {
       console.error('Quick scan failed:', error);
@@ -2159,16 +2203,17 @@ function App() {
       if (res.ok) {
         const data = await res.json();
         const isSocial = name.includes('SOCIAL') || name.includes('PRESENCE');
-        const hits = isSocial && Array.isArray(data) ? data.filter((s: any) => s.status === 'Found' || s.status === 'Possible but Deleted') : [];
+        const socialResults = isSocial && data.results ? data.results : (Array.isArray(data) ? data : []);
+        const hits = isSocial ? socialResults.filter((s: any) => s.status === 'Found' || s.status === 'Possible but Deleted') : [];
         
         updateToolStatus(runningToolId, { 
           status: 'completed', 
           progress: 100,
-          results: `Found ${Array.isArray(data) ? data.length : typeof data === 'object' && data !== null ? Object.keys(data).length : 0} data points`,
-          logs: isSocial && Array.isArray(data)
+          results: `Found ${isSocial ? socialResults.length : (Array.isArray(data) ? data.length : typeof data === 'object' && data !== null ? Object.keys(data).length : 0)} data points`,
+          logs: isSocial
             ? [`Scan complete. Found ${hits.length} active profiles.`, ...hits.map((h: any) => `HIT: ${h.name} - ${h.url}`)]
             : [`Scan complete. Received ${Array.isArray(data) ? data.length : 'data'} results.`],
-          siteResults: isSocial ? data : []
+          siteResults: isSocial ? socialResults : []
         });
         
         if (toolId) {
@@ -2232,6 +2277,7 @@ function App() {
     setIsScanning(true);
     setIsDeepScan(deep);
     setIsHistoricalScan(false);
+    setAiSuggestions([]);
     setActiveTab('Scan');
 
     const processTarget = async (query: string, isPrimary: boolean) => {
@@ -2275,9 +2321,31 @@ function App() {
           results.dns = dnsRes;
           
           // Merge specialized social results
-          const combinedSocial = [...(sherlockRes || []), ...(maigretRes || [])];
+          const sherlockResults = sherlockRes?.results || (Array.isArray(sherlockRes) ? sherlockRes : []);
+          const maigretResults = maigretRes?.results || (Array.isArray(maigretRes) ? maigretRes : []);
+          const combinedSocial = [...sherlockResults, ...maigretResults];
+          
           const uniqueSocial = Array.from(new Map(combinedSocial.map(s => [s.name, s])).values());
           results.social = uniqueSocial;
+
+          // Merge suggestions
+          const combinedSuggestions = [...(sherlockRes?.suggestions || []), ...(maigretRes?.suggestions || [])];
+          if (combinedSuggestions.length > 0) {
+            setAiSuggestions(prev => {
+              const all = [...prev, ...combinedSuggestions.map((s: any) => ({
+                name: s.name,
+                reason: s.description,
+                directLink: s.url
+              }))];
+              // Deduplicate by name
+              const seen = new Set();
+              return all.filter(s => {
+                if (seen.has(s.name)) return false;
+                seen.add(s.name);
+                return true;
+              });
+            });
+          }
         } else {
           if (isDomain) {
             const [whoisRes, dnsRes] = await Promise.all([
@@ -2289,7 +2357,19 @@ function App() {
           }
 
           if (isUsername || isEmail) {
-            results.social = await runTool('SOCIAL_IDENTIFIER', `/api/osint/social?target=${query}`, undefined, 'Social');
+            const socialData = await runTool('SOCIAL_IDENTIFIER', `/api/osint/social?target=${query}`, undefined, 'Social');
+            results.social = socialData?.results || (Array.isArray(socialData) ? socialData : []);
+            
+            if (socialData?.suggestions?.length > 0) {
+              setAiSuggestions(prev => [
+                ...prev,
+                ...socialData.suggestions.map((s: any) => ({
+                  name: s.name,
+                  reason: s.description,
+                  directLink: s.url
+                }))
+              ]);
+            }
           }
 
           if (isEmail) {
@@ -6690,6 +6770,16 @@ const IntelligenceWindow = React.memo(({
                   </div>
                 )}
 
+                {scanResults?.social?.some((s: any) => s.status === 'Timed Out') && (
+                  <div className="flex items-center gap-4 p-5 bg-neon-yellow/5 border border-neon-yellow/20 rounded-lg">
+                    <AlertTriangle size={20} className="text-neon-yellow" />
+                    <div className="flex-1">
+                      <span className="text-[10px] font-black text-neon-yellow uppercase tracking-[0.2em] block mb-1">PARTIAL_DATA_RETRIEVED</span>
+                      <p className="text-[9px] font-mono text-neon-yellow/60 uppercase">Some sectors timed out due to extreme site lists. Results are incomplete.</p>
+                    </div>
+                  </div>
+                )}
+
                 {/* Risk Score */}
                 {targetRiskScore && (
                   <div className="grid grid-cols-1 gap-6">
@@ -7007,7 +7097,7 @@ const IntelligenceWindow = React.memo(({
                           if (categorySites.length === 0) return null;
                           
                           const foundSites = categorySites.filter((s: any) => {
-                            const isFound = s.status === 'Found' || s.status === 'Possible but Deleted';
+                            const isFound = s.status === 'Found' || s.status === 'Possible but Deleted' || s.status === 'Timed Out' || s.status === 'Error';
                             return isFound && !falsePositives.has(s.name);
                           });
                           
@@ -7032,12 +7122,21 @@ const IntelligenceWindow = React.memo(({
                                   </div>
                                 ) : categorySites.map((site: any) => {
                                   const isFalsePositive = falsePositives.has(site.name);
-                                  if ((site.status === 'Found' || site.status === 'Possible but Deleted') && !isFalsePositive) {
+                                  const isRelevant = site.status === 'Found' || site.status === 'Possible but Deleted' || site.status === 'Timed Out' || site.status === 'Error';
+                                  if (isRelevant && !isFalsePositive) {
                                     const isPossible = site.status === 'Possible but Deleted';
+                                    const isError = site.status === 'Error';
+                                    const isTimeout = site.status === 'Timed Out';
+                                    
                                     return (
                                       <div 
                                         key={site.name}
-                                        className={`p-3 border rounded-lg flex items-center justify-between transition-all group/row ${isPossible ? 'border-neon-magenta/30 bg-neon-magenta/5 hover:border-neon-magenta/60' : 'border-neon-lime/30 bg-neon-lime/5 hover:border-neon-lime/60'}`}
+                                        className={`p-3 border rounded-lg flex items-center justify-between transition-all group/row ${
+                                          isPossible ? 'border-neon-magenta/30 bg-neon-magenta/5 hover:border-neon-magenta/60' : 
+                                          isError ? 'border-red-500/30 bg-red-500/5 hover:border-red-500/60' :
+                                          isTimeout ? 'border-neon-yellow/30 bg-neon-yellow/5 hover:border-neon-yellow/60' :
+                                          'border-neon-lime/30 bg-neon-lime/5 hover:border-neon-lime/60'
+                                        }`}
                                       >
                                         <div className="flex items-center gap-4 flex-1 min-w-0">
                                           {site.avatar ? (
@@ -7103,8 +7202,13 @@ const IntelligenceWindow = React.memo(({
                                                   {site.confidence}%
                                                 </div>
                                               )}
-                                              <span className={`text-[9px] font-black tracking-widest ${isPossible ? 'text-neon-magenta' : 'text-neon-lime'}`}>
-                                                {isPossible ? 'POSSIBLE' : 'FOUND'}
+                                              <span className={`text-[9px] font-black tracking-widest ${
+                                                isPossible ? 'text-neon-magenta' : 
+                                                isError ? 'text-red-500' :
+                                                isTimeout ? 'text-neon-yellow' :
+                                                'text-neon-lime'
+                                              }`}>
+                                                {site.status.toUpperCase()}
                                               </span>
                                             </div>
                                             <button 
